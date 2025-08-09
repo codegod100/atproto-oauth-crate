@@ -13,6 +13,9 @@ pub use oauth::{OAuthClientBuilder, AtprotoOAuthClient};
 pub use storage::{SqliteSessionStore, SqliteStateStore, SqliteStoreError};
 pub use resolver::HickoryDnsTxtResolver;
 
+// Re-export OAuth database models and helper functions for custom schema implementations
+pub use db::{create_oauth_tables, AuthSession, AuthState};
+
 // Re-export key external types that users will need
 pub use atrium_oauth::{
     OAuthClient, OAuthClientConfig, Scope, KnownScope, AuthorizeOptions, CallbackParams,

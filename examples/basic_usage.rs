@@ -1,8 +1,11 @@
 /// Long-running example showing how to use the atproto-oauth crate with a web server
+mod schema;
+
 use atproto_oauth::{
     OAuthClientBuilder, AtprotoOAuthClient, AuthorizeOptions, CallbackParams, 
-    KnownScope, Scope, Handle, db::create_tables_in_database,
+    KnownScope, Scope, Handle,
 };
+use schema::create_tables_in_database;
 use atrium_api::agent::Agent;
 use async_sqlite::PoolBuilder;
 use axum::{
@@ -29,7 +32,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .open()
         .await?;
 
-    // Create database tables
+    // Create database tables - this example shows how to integrate OAuth tables 
+    // with your application-specific schema. See schema.rs for implementation details.
     create_tables_in_database(&db_pool).await?;
     println!("✅ Database initialized");
 
@@ -93,6 +97,7 @@ async fn home_handler() -> Html<&'static str> {
             <li><code>async-sqlite</code> - Async SQLite for session storage</li>
         </ul>
         <p><strong>Run this example:</strong> <code>cargo run --example basic_usage</code></p>
+        <p><strong>Database Schema:</strong> See <code>examples/schema.rs</code> for how to integrate OAuth tables with your application schema</p>
     </div>
     
     <h2>Test OAuth Flow</h2>
