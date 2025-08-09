@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block title %}OAuth Success - AT Protocol OAuth Example{% endblock %}
+
+{% block content %}
+<h1>✅ OAuth Success!</h1>
+
+<div class="success">
+    <p>OAuth flow completed successfully! Session established and user authenticated.</p>
+</div>
+
+{% if let Some(info) = user_info %}
+<div class="user-info">
+    <h3>👤 Authenticated User</h3>
+    {% if let Some(handle) = info.handle %}
+    <p><strong>Handle:</strong> @{{ handle }}</p>
+    {% endif %}
+    {% if let Some(display_name) = info.display_name %}
+    <p><strong>Display Name:</strong> {{ display_name }}</p>
+    {% endif %}
+    {% if let Some(did) = info.did %}
+    <p><strong>DID:</strong> <code>{{ did }}</code></p>
+    {% endif %}
+    {% if let Some(followers_count) = info.followers_count %}
+    <p><strong>Followers:</strong> {{ followers_count }}</p>
+    {% endif %}
+    {% if let Some(follows_count) = info.follows_count %}
+    <p><strong>Following:</strong> {{ follows_count }}</p>
+    {% endif %}
+    {% if let Some(posts_count) = info.posts_count %}
+    <p><strong>Posts:</strong> {{ posts_count }}</p>
+    {% endif %}
+    {% if let Some(description) = info.description %}
+    <p><strong>Bio:</strong> {{ description }}</p>
+    {% endif %}
+</div>
+{% else %}
+<div class="user-info">
+    <p><em>{% if let Some(msg) = error_message %}{{ msg }}{% else %}No user information available{% endif %}</em></p>
+</div>
+{% endif %}
+
+<div class="info">
+    <h3>🔧 Technical Details:</h3>
+    <ul>
+        <li>✅ AT Protocol OAuth flow completed</li>
+        <li>✅ User session created and stored in SQLite</li>
+        <li>✅ Session credentials verified with API call</li>
+        <li>✅ User profile fetched using authenticated API</li>
+    </ul>
+    
+    <p><strong>Next Steps:</strong></p>
+    <ul>
+        <li>Session is now stored and can be restored later</li>
+        <li>Use <code>oauth_client.restore(did)</code> to get the session back</li>
+        <li>Create an <code>Agent</code> with the session to make API calls</li>
+    </ul>
+</div>
+
+<a href="/" class="button success">← Start Another OAuth Flow</a>
+{% endblock %}

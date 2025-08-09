@@ -26,3 +26,17 @@ pub use atrium_identity::{
     did::{CommonDidResolver, CommonDidResolverConfig, DEFAULT_PLC_DIRECTORY_URL},
     handle::{AtprotoHandleResolver, AtprotoHandleResolverConfig},
 };
+
+// Re-export common types needed for examples and applications
+pub use async_sqlite::{Pool, PoolBuilder};
+pub use atrium_api::agent::Agent;
+
+// Re-export web framework types for examples and applications
+pub use axum::{
+    extract::{Query, State},
+    response::{Redirect, IntoResponse},
+    routing::get,
+    Router,
+};
+pub use askama::Template;
+pub use env_logger;

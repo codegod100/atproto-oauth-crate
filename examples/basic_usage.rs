@@ -1,19 +1,18 @@
 /// Long-running example showing how to use the atproto-oauth crate with a web server
 mod schema;
+mod templates;
 
 use atproto_oauth::{
+    // Core OAuth functionality
     OAuthClientBuilder, AtprotoOAuthClient, AuthorizeOptions, CallbackParams, 
     KnownScope, Scope, Handle,
+    // Database and agent types
+    Agent, PoolBuilder,
+    // Web framework types
+    Query, State, Redirect, get, Router,
 };
 use schema::create_tables_in_database;
-use atrium_api::agent::Agent;
-use async_sqlite::PoolBuilder;
-use axum::{
-    extract::{Query, State},
-    response::{Html, Redirect},
-    routing::get,
-    Router,
-};
+use templates::{HomeTemplate, SuccessTemplate, ErrorTemplate, UserInfo};
 use std::sync::Arc;
 // Removed unused import
 
@@ -22,7 +21,7 @@ type AppState = Arc<AtprotoOAuthClient>;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
-    env_logger::init();
+    atproto_oauth::env_logger::init();
 
     println!("🚀 Starting AT Protocol OAuth Example Server");
 
@@ -65,74 +64,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn home_handler() -> Html<&'static str> {
-    Html(r#"
-<!DOCTYPE html>
-<html>
-<head>
-    <title>AT Protocol OAuth Example</title>
-    <style>
-        body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; }
-        .button { display: inline-block; padding: 10px 20px; background: #0085ff; color: white; text-decoration: none; border-radius: 5px; margin: 10px 0; }
-        .button:hover { background: #0070dd; }
-        .info { background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 10px 0; }
-    </style>
-</head>
-<body>
-    <h1>🔐 AT Protocol OAuth Example</h1>
-    <div class="info">
-        <p>This example demonstrates the <code>atproto-oauth</code> Rust crate in action.</p>
-        <p>This is a <strong>Rust web server</strong> built with Axum that shows how to integrate AT Protocol OAuth into your applications.</p>
-        <p>To test the OAuth flow, you'll need a Bluesky handle (like <code>user.bsky.social</code>).</p>
-        <p><a href="https://github.com/codegod100/atproto-oauth-crate" target="_blank">📖 View full documentation and source code on GitHub</a></p>
-    </div>
-    
-    <div class="info">
-        <h3>🦀 About This Rust Project</h3>
-        <p><strong>Dependencies:</strong></p>
-        <ul style="margin: 10px 0; padding-left: 20px;">
-            <li><code>atproto-oauth</code> - The main OAuth crate we're demonstrating</li>
-            <li><code>axum</code> - Modern async web framework for Rust</li>
-            <li><code>tokio</code> - Async runtime</li>
-            <li><code>async-sqlite</code> - Async SQLite for session storage</li>
-        </ul>
-        <p><strong>Run this example:</strong> <code>cargo run --example basic_usage</code></p>
-        <p><strong>Database Schema:</strong> See <code>examples/schema.rs</code> for how to integrate OAuth tables with your application schema</p>
-    </div>
-    
-    <h2>Test OAuth Flow</h2>
-    <form action="/login" method="get">
-        <label for="handle">Enter your Bluesky handle:</label><br>
-        <input type="text" id="handle" name="handle" placeholder="user.bsky.social" style="width: 300px; padding: 8px; margin: 10px 0;">
-        <br>
-        <button type="submit" class="button">Start OAuth Flow</button>
-    </form>
-    
-    <div class="info">
-        <h3>How it works:</h3>
-        <ol>
-            <li>Enter your AT Protocol handle above</li>
-            <li>You'll be redirected to your PDS for authentication</li>
-            <li>After auth, you'll be redirected back to <code>/oauth/callback</code></li>
-            <li>The callback will process the OAuth response</li>
-        </ol>
-    </div>
-</body>
-</html>
-    "#)
+async fn home_handler() -> HomeTemplate {
+    HomeTemplate
 }
 
 async fn login_handler(
     Query(params): Query<std::collections::HashMap<String, String>>,
     State(oauth_client): State<AppState>,
-) -> Result<Redirect, Html<String>> {
+) -> Result<Redirect, ErrorTemplate> {
     let handle_str = params.get("handle").ok_or_else(|| {
-        Html("Error: Handle parameter required".to_string())
+        ErrorTemplate {
+            title: "Missing Handle".to_string(),
+            handle: None,
+            action: Some("start OAuth flow".to_string()),
+            error: "Handle parameter required".to_string(),
+        }
     })?;
 
     // Parse the handle
     let handle = Handle::new(handle_str.clone()).map_err(|e| {
-        Html(format!("Error: Invalid handle '{}': {}", handle_str, e))
+        ErrorTemplate {
+            title: "Invalid Handle".to_string(),
+            handle: Some(handle_str.clone()),
+            action: Some("parse handle".to_string()),
+            error: e.to_string(),
+        }
     })?;
 
     // Start OAuth flow
@@ -153,21 +109,12 @@ async fn login_handler(
         }
         Err(e) => {
             println!("❌ OAuth error for {}: {}", handle_str, e);
-            Err(Html(format!(
-                r#"
-<!DOCTYPE html>
-<html>
-<head><title>OAuth Error</title></head>
-<body>
-    <h1>❌ OAuth Error</h1>
-    <p>Failed to start OAuth flow for handle: {}</p>
-    <p>Error: {}</p>
-    <a href="/">← Back to Home</a>
-</body>
-</html>
-                "#,
-                handle_str, e
-            )))
+            Err(ErrorTemplate {
+                title: "OAuth Error".to_string(),
+                handle: Some(handle_str.clone()),
+                action: Some("start OAuth flow".to_string()),
+                error: e.to_string(),
+            })
         }
     }
 }
@@ -175,7 +122,7 @@ async fn login_handler(
 async fn callback_handler(
     Query(params): Query<CallbackParams>,
     State(oauth_client): State<AppState>,
-) -> Html<String> {
+) -> Result<SuccessTemplate, ErrorTemplate> {
     println!("🔄 Processing OAuth callback");
     
     match oauth_client.callback(params).await {
@@ -204,126 +151,50 @@ async fn callback_handler(
                     {
                         Ok(profile) => {
                             println!("✅ Successfully fetched profile for: {}", profile.handle.as_str());
-                            format!(
-                                r#"
-                                <div class="user-info">
-                                    <h3>👤 Authenticated User</h3>
-                                    <p><strong>Handle:</strong> @{}</p>
-                                    <p><strong>Display Name:</strong> {}</p>
-                                    <p><strong>DID:</strong> <code>{}</code></p>
-                                    <p><strong>Followers:</strong> {}</p>
-                                    <p><strong>Following:</strong> {}</p>
-                                    <p><strong>Posts:</strong> {}</p>
-                                    {}
-                                </div>
-                                "#,
-                                profile.handle.as_str(),
-                                profile.display_name.as_deref().unwrap_or("(Not set)"),
-                                did.as_str(),
-                                profile.followers_count.unwrap_or(0),
-                                profile.follows_count.unwrap_or(0),
-                                profile.posts_count.unwrap_or(0),
-                                if let Some(ref description) = profile.description {
-                                    format!("<p><strong>Bio:</strong> {}</p>", html_escape(description))
-                                } else {
-                                    String::new()
-                                }
-                            )
+                            Some(UserInfo {
+                                handle: Some(profile.handle.as_str().to_string()),
+                                display_name: profile.display_name.clone(),
+                                did: Some(did.as_str().to_string()),
+                                followers_count: profile.followers_count.map(|c| c as u32),
+                                follows_count: profile.follows_count.map(|c| c as u32),
+                                posts_count: profile.posts_count.map(|c| c as u32),
+                                description: profile.description.clone(),
+                            })
                         }
                         Err(e) => {
                             println!("⚠️  Could not fetch profile: {}", e);
-                            format!(
-                                r#"
-                                <div class="user-info">
-                                    <h3>👤 Authenticated User</h3>
-                                    <p><strong>DID:</strong> <code>{}</code></p>
-                                    <p><em>Profile details could not be fetched: {}</em></p>
-                                </div>
-                                "#,
-                                did.as_str(), html_escape(&e.to_string())
-                            )
+                            Some(UserInfo {
+                                handle: None,
+                                display_name: None,
+                                did: Some(did.as_str().to_string()),
+                                followers_count: None,
+                                follows_count: None,
+                                posts_count: None,
+                                description: None,
+                            })
                         }
                     }
                 }
                 None => {
                     println!("⚠️  No DID found in session");
-                    "<div class=\"user-info\"><p><em>No user DID found in session</em></p></div>".to_string()
+                    None
                 }
             };
 
-            Html(format!(
-                r#"
-<!DOCTYPE html>
-<html>
-<head>
-    <title>OAuth Success</title>
-    <style>
-        body {{ font-family: Arial, sans-serif; max-width: 700px; margin: 50px auto; padding: 20px; }}
-        .success {{ background: #d4edda; color: #155724; padding: 15px; border-radius: 5px; }}
-        .info {{ background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 10px 0; }}
-        .user-info {{ background: #e7f3ff; border: 2px solid #0085ff; padding: 15px; border-radius: 5px; margin: 15px 0; }}
-        .button {{ display: inline-block; padding: 10px 20px; background: #28a745; color: white; text-decoration: none; border-radius: 5px; }}
-        code {{ background: #f4f4f4; padding: 2px 4px; border-radius: 3px; font-size: 0.9em; }}
-    </style>
-</head>
-<body>
-    <h1>✅ OAuth Success!</h1>
-    <div class="success">
-        <p>OAuth flow completed successfully! Session established and user authenticated.</p>
-    </div>
-    
-    {}
-    
-    <div class="info">
-        <h3>🔧 Technical Details:</h3>
-        <ul>
-            <li>✅ AT Protocol OAuth flow completed</li>
-            <li>✅ User session created and stored in SQLite</li>
-            <li>✅ Session credentials verified with API call</li>
-            <li>✅ User profile fetched using authenticated API</li>
-        </ul>
-        
-        <p><strong>Next Steps:</strong></p>
-        <ul>
-            <li>Session is now stored and can be restored later</li>
-            <li>Use <code>oauth_client.restore(did)</code> to get the session back</li>
-            <li>Create an <code>Agent</code> with the session to make API calls</li>
-        </ul>
-    </div>
-    
-    <a href="/" class="button">← Start Another OAuth Flow</a>
-</body>
-</html>
-                "#,
-                user_info
-            ))
+            Ok(SuccessTemplate {
+                user_info,
+                error_message: None,
+            })
         }
         Err(e) => {
             println!("❌ OAuth callback error: {}", e);
-            Html(format!(
-                r#"
-<!DOCTYPE html>
-<html>
-<head><title>OAuth Callback Error</title></head>
-<body>
-    <h1>❌ OAuth Callback Error</h1>
-    <p>Failed to process OAuth callback</p>
-    <p>Error: {}</p>
-    <a href="/">← Back to Home</a>
-</body>
-</html>
-                "#,
-                html_escape(&e.to_string())
-            ))
+            Err(ErrorTemplate {
+                title: "OAuth Callback Error".to_string(),
+                handle: None,
+                action: Some("process OAuth callback".to_string()),
+                error: e.to_string(),
+            })
         }
     }
 }
 
-// Simple HTML escaping function
-fn html_escape(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#x27;")
-}

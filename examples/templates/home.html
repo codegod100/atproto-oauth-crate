@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>🔐 AT Protocol OAuth Example</h1>
+
+<div class="info">
+    <p>This example demonstrates the <code>atproto-oauth</code> Rust crate in action.</p>
+    <p>This is a <strong>Rust web server</strong> built with Axum that shows how to integrate AT Protocol OAuth into your applications.</p>
+    <p>To test the OAuth flow, you'll need a Bluesky handle (like <code>user.bsky.social</code>).</p>
+    <p><a href="https://github.com/codegod100/atproto-oauth-crate" target="_blank">📖 View full documentation and source code on GitHub</a></p>
+</div>
+
+<div class="info">
+    <h3>🦀 About This Rust Project</h3>
+    <p><strong>Dependencies:</strong></p>
+    <ul style="margin: 10px 0; padding-left: 20px;">
+        <li><code>atproto-oauth</code> - The main OAuth crate we're demonstrating</li>
+        <li><code>axum</code> - Modern async web framework for Rust</li>
+        <li><code>tokio</code> - Async runtime</li>
+        <li><code>async-sqlite</code> - Async SQLite for session storage</li>
+    </ul>
+    <p><strong>Run this example:</strong> <code>cargo run --example basic_usage</code></p>
+    <p><strong>Database Schema:</strong> See <code>examples/schema.rs</code> for how to integrate OAuth tables with your application schema</p>
+</div>
+
+<h2>Test OAuth Flow</h2>
+<form action="/login" method="get">
+    <label for="handle">Enter your Bluesky handle:</label><br>
+    <input type="text" id="handle" name="handle" placeholder="user.bsky.social" style="width: 300px; padding: 8px; margin: 10px 0;">
+    <br>
+    <button type="submit" class="button">Start OAuth Flow</button>
+</form>
+
+<div class="info">
+    <h3>How it works:</h3>
+    <ol>
+        <li>Enter your AT Protocol handle above</li>
+        <li>You'll be redirected to your PDS for authentication</li>
+        <li>After auth, you'll be redirected back to <code>/oauth/callback</code></li>
+        <li>The callback will process the OAuth response</li>
+    </ol>
+</div>
+{% endblock %}

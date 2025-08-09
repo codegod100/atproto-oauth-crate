@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }} - AT Protocol OAuth Example{% endblock %}
+
+{% block content %}
+<h1>❌ {{ title }}</h1>
+
+<div class="error">
+    {% if let Some(handle) = handle %}
+    <p>Failed to {% if let Some(action) = action %}{{ action }}{% else %}process request{% endif %} for handle: {{ handle }}</p>
+    {% endif %}
+    <p>Error: {{ error }}</p>
+</div>
+
+<a href="/" class="button">← Back to Home</a>
+{% endblock %}

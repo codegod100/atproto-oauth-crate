@@ -4,7 +4,6 @@ use async_sqlite::{
     Pool, rusqlite,
     rusqlite::{Error, Row},
 };
-use atrium_api::types::string::Did;
 use chrono::{DateTime, Datelike, Utc};
 use rusqlite::types::Type;
 use serde::{Deserialize, Serialize};
