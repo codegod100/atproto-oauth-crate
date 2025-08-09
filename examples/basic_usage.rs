@@ -19,9 +19,11 @@ use axum::{
     Json,
     // Response types
     http::{StatusCode, HeaderMap},
+    // Form handling
+    extract::Form,
 };
 use schema::{create_tables_in_database, BlogPostFromDb};
-use templates::{HomeTemplate, SuccessTemplate, ErrorTemplate, UserInfo};
+use templates::{HomeTemplate, SuccessTemplate, ErrorTemplate, UserInfo, BlogListTemplate, BlogCreateTemplate, BlogEditTemplate, BlogViewTemplate, BlogDeleteTemplate, BlogPostInfo};
 use codegen::xyz::blogosphere::post::RecordData as BlogPostRecordData;
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
@@ -80,7 +82,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/", get(home_handler))
         .route("/login", get(login_handler))
         .route("/oauth/callback", get(callback_handler))
-        // Blog CRUD routes
+        // Blog form routes (HTML interface)
+        .route("/blog", get(blog_list_handler))
+        .route("/blog/new", get(blog_create_form_handler))
+        .route("/blog/create", post(blog_create_form_handler_post))
+        .route("/blog/view/:uri", get(blog_view_handler))
+        .route("/blog/edit/:uri", get(blog_edit_form_handler))
+        .route("/blog/update/:uri", post(blog_edit_form_handler_post))
+        .route("/blog/delete/:uri", get(blog_delete_form_handler))
+        .route("/blog/delete/:uri", post(blog_delete_form_handler_post))
+        // Blog CRUD API routes
         .route("/api/posts", post(create_blog_post).get(list_published_posts))
         .route("/api/posts/my", get(list_my_posts))
         .route("/api/posts/:uri", get(get_blog_post).put(update_blog_post).delete(delete_blog_post))
@@ -689,4 +700,350 @@ async fn list_published_posts(
     let responses: Vec<BlogPostResponse> = posts.iter().map(|p| BlogPostResponse::from(p)).collect();
 
     Ok(Json(responses))
+}
+
+// ========== Form Handler Routes ==========
+
+/// Display the blog list page
+async fn blog_list_handler(
+    State(app_state): State<AppState>,
+) -> Result<BlogListTemplate, ErrorTemplate> {
+    // Load all posts from database for display (for now, let's show all posts)
+    let db_pool_arc = Arc::new(app_state.db_pool.clone());
+    let posts = BlogPostFromDb::load_latest_posts(&db_pool_arc).await
+        .map_err(|e| {
+            ErrorTemplate {
+                title: "Database Error".to_string(),
+                handle: None,
+                action: Some("load blog posts".to_string()),
+                error: format!("Failed to load posts: {}", e),
+            }
+        })?;
+
+    // Convert to template format
+    let blog_posts: Vec<BlogPostInfo> = posts.iter().map(|p| BlogPostInfo {
+        uri: p.uri.clone(),
+        title: p.title.clone(),
+        content: p.content.clone(),
+        summary: p.summary.clone(),
+        tags: p.tags.clone(),
+        published: p.published,
+        created_at: p.created_at.to_rfc3339(),
+        updated_at: p.updated_at.to_rfc3339(),
+    }).collect();
+
+    Ok(BlogListTemplate {
+        posts: blog_posts,
+    })
+}
+
+/// Display the create blog post form
+async fn blog_create_form_handler() -> BlogCreateTemplate {
+    BlogCreateTemplate
+}
+
+/// Form data for creating a blog post
+#[derive(Deserialize)]
+struct CreateBlogPostForm {
+    title: String,
+    content: String,
+    summary: Option<String>,
+    tags: Option<String>,
+    published: Option<String>, // Form checkboxes come as strings
+}
+
+/// Handle form submission to create a blog post
+async fn blog_create_form_handler_post(
+    State(app_state): State<AppState>,
+    Form(form): Form<CreateBlogPostForm>,
+) -> Result<Redirect, ErrorTemplate> {
+    // For demo purposes, we'll use a mock DID since we don't have proper session management
+    // In a real app, you'd extract the session from cookies or headers
+    let mock_did = "did:example:user123".to_string();
+
+    // Generate a unique record key (rkey) for this blog post
+    let rkey = format!("post-{}", chrono::Utc::now().timestamp_millis());
+    let uri = format!("at://{}/xyz.blogosphere.post/{}", mock_did, rkey);
+
+    // Parse tags from comma-separated string
+    let tags = form.tags
+        .map(|t| t.split(',').map(|tag| tag.trim().to_string()).collect::<Vec<_>>())
+        .filter(|tags| !tags.is_empty());
+
+    // Create BlogPostRecordData from form
+    let record_data = BlogPostRecordData {
+        title: form.title,
+        content: form.content,
+        summary: form.summary.filter(|s| !s.is_empty()),
+        tags,
+        published: Some(form.published.is_some()),
+        created_at: atrium_api::types::string::Datetime::new(chrono::Utc::now().into()),
+        updated_at: Some(atrium_api::types::string::Datetime::new(chrono::Utc::now().into())),
+    };
+
+    // Convert to database model
+    let blog_post = BlogPostFromDb::from_codegen_record_data(
+        uri.clone(),
+        mock_did.clone(),
+        &record_data
+    ).map_err(|e| {
+        ErrorTemplate {
+            title: "Conversion Error".to_string(),
+            handle: None,
+            action: Some("create blog post".to_string()),
+            error: format!("Failed to convert record data: {}", e),
+        }
+    })?;
+
+    // Save to database
+    let db_pool_arc = Arc::new(app_state.db_pool.clone());
+    blog_post.save(&db_pool_arc).await.map_err(|e| {
+        ErrorTemplate {
+            title: "Database Error".to_string(),
+            handle: None,
+            action: Some("save blog post".to_string()),
+            error: format!("Failed to save to database: {}", e),
+        }
+    })?;
+
+    println!("✅ Successfully created blog post: {}", blog_post.title);
+    Ok(Redirect::to("/blog"))
+}
+
+/// Display a specific blog post
+async fn blog_view_handler(
+    State(app_state): State<AppState>,
+    axum::extract::Path(uri): axum::extract::Path<String>,
+) -> Result<BlogViewTemplate, ErrorTemplate> {
+    // Load the specific post from database
+    let db_pool_arc = Arc::new(app_state.db_pool.clone());
+    let posts = BlogPostFromDb::load_latest_posts(&db_pool_arc).await
+        .map_err(|e| {
+            ErrorTemplate {
+                title: "Database Error".to_string(),
+                handle: None,
+                action: Some("load blog post".to_string()),
+                error: format!("Failed to load posts: {}", e),
+            }
+        })?;
+
+    // Find the post with the matching URI
+    let post = posts.into_iter().find(|p| p.uri == uri)
+        .ok_or_else(|| ErrorTemplate {
+            title: "Not Found".to_string(),
+            handle: None,
+            action: Some("find blog post".to_string()),
+            error: "Blog post not found".to_string(),
+        })?;
+
+    let blog_post_info = BlogPostInfo {
+        uri: post.uri.clone(),
+        title: post.title.clone(),
+        content: post.content.clone(),
+        summary: post.summary.clone(),
+        tags: post.tags.clone(),
+        published: post.published,
+        created_at: post.created_at.to_rfc3339(),
+        updated_at: post.updated_at.to_rfc3339(),
+    };
+
+    Ok(BlogViewTemplate {
+        post: blog_post_info,
+    })
+}
+
+/// Display the edit form for a blog post
+async fn blog_edit_form_handler(
+    State(app_state): State<AppState>,
+    axum::extract::Path(uri): axum::extract::Path<String>,
+) -> Result<BlogEditTemplate, ErrorTemplate> {
+    // Load the specific post from database
+    let db_pool_arc = Arc::new(app_state.db_pool.clone());
+    let posts = BlogPostFromDb::load_latest_posts(&db_pool_arc).await
+        .map_err(|e| {
+            ErrorTemplate {
+                title: "Database Error".to_string(),
+                handle: None,
+                action: Some("load blog post".to_string()),
+                error: format!("Failed to load posts: {}", e),
+            }
+        })?;
+
+    // Find the post with the matching URI
+    let post = posts.into_iter().find(|p| p.uri == uri)
+        .ok_or_else(|| ErrorTemplate {
+            title: "Not Found".to_string(),
+            handle: None,
+            action: Some("find blog post".to_string()),
+            error: "Blog post not found".to_string(),
+        })?;
+
+    let blog_post_info = BlogPostInfo {
+        uri: post.uri.clone(),
+        title: post.title.clone(),
+        content: post.content.clone(),
+        summary: post.summary.clone(),
+        tags: post.tags.clone(),
+        published: post.published,
+        created_at: post.created_at.to_rfc3339(),
+        updated_at: post.updated_at.to_rfc3339(),
+    };
+
+    Ok(BlogEditTemplate {
+        post: blog_post_info,
+    })
+}
+
+/// Form data for updating a blog post
+#[derive(Deserialize)]
+struct UpdateBlogPostForm {
+    title: String,
+    content: String,
+    summary: Option<String>,
+    tags: Option<String>,
+    published: Option<String>, // Form checkboxes come as strings
+}
+
+/// Handle form submission to update a blog post
+async fn blog_edit_form_handler_post(
+    State(app_state): State<AppState>,
+    axum::extract::Path(uri): axum::extract::Path<String>,
+    Form(form): Form<UpdateBlogPostForm>,
+) -> Result<Redirect, ErrorTemplate> {
+    // Load the existing post from database
+    let db_pool_arc = Arc::new(app_state.db_pool.clone());
+    let posts = BlogPostFromDb::load_latest_posts(&db_pool_arc).await
+        .map_err(|e| {
+            ErrorTemplate {
+                title: "Database Error".to_string(),
+                handle: None,
+                action: Some("load blog post".to_string()),
+                error: format!("Failed to load posts: {}", e),
+            }
+        })?;
+
+    // Find the post with the matching URI
+    let existing_post = posts.into_iter().find(|p| p.uri == uri)
+        .ok_or_else(|| ErrorTemplate {
+            title: "Not Found".to_string(),
+            handle: None,
+            action: Some("find blog post".to_string()),
+            error: "Blog post not found".to_string(),
+        })?;
+
+    // Convert existing post to record data for updating
+    let mut record_data = existing_post.to_codegen_record_data()
+        .map_err(|e| {
+            ErrorTemplate {
+                title: "Conversion Error".to_string(),
+                handle: None,
+                action: Some("convert blog post".to_string()),
+                error: format!("Failed to convert existing post: {}", e),
+            }
+        })?;
+
+    // Apply updates from form
+    record_data.title = form.title;
+    record_data.content = form.content;
+    record_data.summary = form.summary.filter(|s| !s.is_empty());
+    
+    // Parse tags from comma-separated string
+    record_data.tags = form.tags
+        .map(|t| t.split(',').map(|tag| tag.trim().to_string()).collect::<Vec<_>>())
+        .filter(|tags| !tags.is_empty());
+    
+    record_data.published = Some(form.published.is_some());
+    
+    // Update timestamps
+    record_data.updated_at = Some(atrium_api::types::string::Datetime::new(chrono::Utc::now().into()));
+
+    // Convert back to database model
+    let updated_post = BlogPostFromDb::from_codegen_record_data(
+        existing_post.uri.clone(),
+        existing_post.author_did.clone(),
+        &record_data
+    ).map_err(|e| {
+        ErrorTemplate {
+            title: "Conversion Error".to_string(),
+            handle: None,
+            action: Some("convert updated post".to_string()),
+            error: format!("Failed to convert updated record data: {}", e),
+        }
+    })?;
+
+    // Save updated post to database
+    updated_post.save_or_update(&app_state.db_pool).await
+        .map_err(|e| {
+            ErrorTemplate {
+                title: "Database Error".to_string(),
+                handle: None,
+                action: Some("update blog post".to_string()),
+                error: format!("Failed to update post: {}", e),
+            }
+        })?;
+
+    println!("✅ Successfully updated blog post: {}", updated_post.title);
+    Ok(Redirect::to("/blog"))
+}
+
+/// Display the delete confirmation for a blog post
+async fn blog_delete_form_handler(
+    State(app_state): State<AppState>,
+    axum::extract::Path(uri): axum::extract::Path<String>,
+) -> Result<BlogDeleteTemplate, ErrorTemplate> {
+    // Load the specific post from database
+    let db_pool_arc = Arc::new(app_state.db_pool.clone());
+    let posts = BlogPostFromDb::load_latest_posts(&db_pool_arc).await
+        .map_err(|e| {
+            ErrorTemplate {
+                title: "Database Error".to_string(),
+                handle: None,
+                action: Some("load blog post".to_string()),
+                error: format!("Failed to load posts: {}", e),
+            }
+        })?;
+
+    // Find the post with the matching URI
+    let post = posts.into_iter().find(|p| p.uri == uri)
+        .ok_or_else(|| ErrorTemplate {
+            title: "Not Found".to_string(),
+            handle: None,
+            action: Some("find blog post".to_string()),
+            error: "Blog post not found".to_string(),
+        })?;
+
+    let blog_post_info = BlogPostInfo {
+        uri: post.uri.clone(),
+        title: post.title.clone(),
+        content: post.content.clone(),
+        summary: post.summary.clone(),
+        tags: post.tags.clone(),
+        published: post.published,
+        created_at: post.created_at.to_rfc3339(),
+        updated_at: post.updated_at.to_rfc3339(),
+    };
+
+    Ok(BlogDeleteTemplate {
+        post: blog_post_info,
+    })
+}
+
+/// Handle form submission to delete a blog post
+async fn blog_delete_form_handler_post(
+    State(app_state): State<AppState>,
+    axum::extract::Path(uri): axum::extract::Path<String>,
+) -> Result<Redirect, ErrorTemplate> {
+    // Delete the post from database
+    BlogPostFromDb::delete_by_uri(&app_state.db_pool, uri.clone()).await
+        .map_err(|e| {
+            ErrorTemplate {
+                title: "Database Error".to_string(),
+                handle: None,
+                action: Some("delete blog post".to_string()),
+                error: format!("Failed to delete post: {}", e),
+            }
+        })?;
+
+    println!("✅ Successfully deleted blog post with URI: {}", uri);
+    Ok(Redirect::to("/blog"))
 }
