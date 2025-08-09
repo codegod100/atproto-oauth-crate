@@ -1,5 +1,5 @@
-# Use the official Rust image as base
-FROM rust:1.82-slim-bookworm AS builder
+# Use the official Rust nightly image as base
+FROM rustlang/rust:nightly-slim AS builder
 
 # Install system dependencies needed for compilation
 RUN apt-get update && apt-get install -y \
