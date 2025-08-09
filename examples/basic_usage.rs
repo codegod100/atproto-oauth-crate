@@ -26,7 +26,7 @@ use axum::{
     extract::Form,
 };
 use schema::{create_tables_in_database, BlogPostFromDb};
-use templates::{HomeTemplate, SuccessTemplate, ErrorTemplate, UserInfo, BlogListTemplate, BlogCreateTemplate, BlogEditTemplate, BlogViewTemplate, BlogDeleteTemplate, BlogPostInfo};
+use templates::{HomeTemplate, SuccessTemplate, ErrorTemplate, UserInfo, BlogListTemplate, BlogCreateTemplate, BlogEditTemplate, BlogViewTemplate, BlogPostInfo};
 use askama::Template;
 use codegen::com::crabdance::nandi::post::RecordData as BlogPostRecordData;
 use std::sync::Arc;
@@ -120,19 +120,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/", get(home_handler))
         .route("/login", get(login_handler))
         .route("/oauth/callback", get(callback_handler))
+    .route("/healthz", get(|| async { "ok" }))
         // Blog form routes (HTML interface)
-        .route("/blog", get(blog_list_handler))
-        .route("/blog/new", get(blog_create_form_handler))
-        .route("/blog/create", post(blog_create_form_handler_post))
-        .route("/blog/view/:uri", get(blog_view_handler))
-        .route("/blog/edit/:uri", get(blog_edit_form_handler))
-        .route("/blog/update/:uri", post(blog_edit_form_handler_post))
-        .route("/blog/delete/:uri", get(blog_delete_form_handler))
-        .route("/blog/delete/:uri", post(blog_delete_form_handler_post))
+        .route("/posts", get(blog_list_handler))
+        .route("/posts/new", get(blog_create_form_handler))
+    // Support accidental GET navigation to /posts/create by redirecting to the form at /posts/new
+    .route("/posts/create", get(|| async { Redirect::to("/posts/new") }).post(blog_create_form_handler_post))
+        // Use wildcard *uri so the full at:// URI (which contains slashes) is captured
+        .route("/posts/view/*uri", get(blog_view_handler))
+        .route("/posts/edit/*uri", get(blog_edit_form_handler))
+        .route("/posts/update/*uri", post(blog_edit_form_handler_post))
+    .route("/posts/delete/:rkey", post(blog_delete_form_handler_post))
         // Blog CRUD API routes
         .route("/api/posts", post(create_blog_post).get(list_published_posts))
         .route("/api/posts/my", get(list_my_posts))
-        .route("/api/posts/:uri", get(get_blog_post).put(update_blog_post).delete(delete_blog_post))
+    // Wildcard to allow full at:// URIs in path
+    .route("/api/posts/*uri", get(get_blog_post).put(update_blog_post).delete(delete_blog_post))
         .with_state(app_state);
 
     println!("\n🌐 Server running on http://127.0.0.1:3000");
@@ -313,19 +316,24 @@ async fn login_handler(
 }
 
 async fn callback_handler(
+    original_uri: axum::extract::OriginalUri,
     Query(params): Query<CallbackParams>,
     State(app_state): State<AppState>,
 ) -> Result<(StatusCode, HeaderMap, Html<String>), ErrorTemplate> {
-    println!("🔄 Processing OAuth callback");
+    use std::time::Instant;
+    let start = Instant::now();
+    let code_preview = params.code.chars().take(8).collect::<String>();
+    let state_preview = params.state.as_ref().map(|s| s.chars().take(8).collect::<String>()).unwrap_or_else(|| "<none>".to_string());
+    println!("[CALLBACK][START] uri='{}' code_preview='{}' state_preview='{}' timestamp={}ms", original_uri.0, code_preview, state_preview, chrono::Utc::now().timestamp_millis());
     
     match (&*app_state.oauth_client).callback(params).await {
         Ok((session, _)) => {
-            println!("✅ OAuth callback successful");
+            println!("[CALLBACK][SUCCESS] Session established in {}ms", start.elapsed().as_millis());
             
             // Get user DID from session
             let user_info = match session.did().await {
                 Some(did) => {
-                    println!("👤 User DID: {}", did.as_str());
+                    println!("[CALLBACK][SESSION] DID={}", did.as_str());
                     
                     // Create agent to fetch profile
                     let agent = Agent::new(session);
@@ -343,7 +351,7 @@ async fn callback_handler(
                         .await
                     {
                         Ok(profile) => {
-                            println!("✅ Successfully fetched profile for: {}", profile.handle.as_str());
+                            println!("[CALLBACK][PROFILE][SUCCESS] handle={} followers={:?} follows={:?}", profile.handle.as_str(), profile.followers_count, profile.follows_count);
                             Some(UserInfo {
                                 handle: Some(profile.handle.as_str().to_string()),
                                 display_name: profile.display_name.clone(),
@@ -355,7 +363,7 @@ async fn callback_handler(
                             })
                         }
                         Err(e) => {
-                            println!("⚠️  Could not fetch profile: {}", e);
+                            println!("[CALLBACK][PROFILE][WARN] fetch failed error={}", e);
                             Some(UserInfo {
                                 handle: None,
                                 display_name: None,
@@ -369,7 +377,7 @@ async fn callback_handler(
                     }
                 }
                 None => {
-                    println!("⚠️  No DID found in session");
+                    println!("[CALLBACK][WARN] No DID in session");
                     None
                 }
             };
@@ -395,7 +403,7 @@ async fn callback_handler(
             Ok((StatusCode::OK, headers, Html(html)))
         }
         Err(e) => {
-            println!("❌ OAuth callback error: {}", e);
+            println!("[CALLBACK][ERROR] error={} elapsed_ms={}", e, start.elapsed().as_millis());
             Err(ErrorTemplate {
                 title: "OAuth Callback Error".to_string(),
                 handle: None,
@@ -578,6 +586,8 @@ async fn update_blog_post(
     axum::extract::Path(uri): axum::extract::Path<String>,
     Json(request): Json<UpdateBlogPostRequest>,
 ) -> Result<Json<BlogPostResponse>, (StatusCode, Json<ApiError>)> {
+    let start = std::time::Instant::now();
+    println!("[BLOG][UPDATE][START] uri='{}' ts={}ms", uri, chrono::Utc::now().timestamp_millis());
     // Authenticate user
     let session = extract_session(headers, State(app_state.clone())).await.map_err(|_| {
         (StatusCode::UNAUTHORIZED, Json(ApiError {
@@ -652,7 +662,7 @@ async fn update_blog_post(
         }))
     })?;
 
-    // Save updated post to database
+    // Save updated post to database first (local source of truth)
     updated_post.save_or_update(&app_state.db_pool).await
         .map_err(|e| {
             (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError {
@@ -661,7 +671,107 @@ async fn update_blog_post(
             }))
         })?;
 
-    println!("✅ Successfully updated blog post: {}", updated_post.title);
+    // Attempt to update the record on the PDS as well (best-effort)
+    // We derive rkey from the URI: at://did/collection/rkey
+    let rkey_opt = uri.rsplit('/').next().map(|s| s.to_string());
+    let collection_opt = uri.split('/').nth(3).map(|s| s.to_string()); // after at:, '', did, collection
+    if let (Some(rkey), Some(collection)) = (rkey_opt, collection_opt) {
+        // Only proceed if this is our custom collection (avoid touching unrelated URIs)
+        if collection == "com.crabdance.nandi.post" {
+            if let Ok(did_parsed) = Did::new(session.did.clone()) {
+                match app_state.oauth_client.restore(&did_parsed).await {
+                    Ok(oauth_session) => {
+                        let agent = Agent::new(oauth_session);
+
+                        // Build record JSON and inject $type
+                        let mut record_value = serde_json::to_value(&record_data).unwrap_or_else(|_| serde_json::json!({}));
+                        if let serde_json::Value::Object(obj) = &mut record_value {
+                            obj.insert("$type".to_string(), serde_json::Value::String(collection.clone()));
+                        }
+
+                        // We try a put_record first (update). If that fails with not found, fallback to create.
+                        let attempt_put = |validate_flag: bool, record_json: &serde_json::Value| {
+                            atrium_api::com::atproto::repo::put_record::InputData {
+                                repo: did_parsed.clone().into(),
+                                collection: Nsid::new(collection.clone()).unwrap(),
+                                rkey: RecordKey::new(rkey.clone()).unwrap(),
+                                validate: Some(validate_flag),
+                                swap_record: None,
+                                swap_commit: None,
+                                record: record_json.clone().try_into_unknown().unwrap(),
+                            }
+                        };
+
+                        let mut put_input = attempt_put(true, &record_value);
+                        let mut did_put = false;
+                        match agent.api.com.atproto.repo.put_record(put_input.clone().into()).await {
+                            Ok(resp) => {
+                                println!("[BLOG][UPDATE][PDS][PUT_SUCCESS] uri={} cid={:?}", resp.data.uri, resp.data.cid);
+                                did_put = true;
+                            }
+                            Err(e) => {
+                                let msg = format!("{}", e);
+                                if msg.contains("Lexicon not found") || msg.contains("schema") {
+                                    println!("[BLOG][UPDATE][PDS][PUT_RETRY] validation=false reason=lexicon_not_found");
+                                    put_input = attempt_put(false, &record_value);
+                                    match agent.api.com.atproto.repo.put_record(put_input.into()).await {
+                                        Ok(resp2) => {
+                                            println!("[BLOG][UPDATE][PDS][PUT_SUCCESS_NO_VALIDATION] uri={}", resp2.data.uri);
+                                            did_put = true;
+                                        }
+                                        Err(e2) => {
+                                            println!("[BLOG][UPDATE][PDS][PUT_FAIL_RETRY] error={}", e2);
+                                        }
+                                    }
+                                } else if msg.contains("Record not found") || msg.contains("Could not find record") {
+                                    // We'll fall back to create below
+                                    println!("[BLOG][UPDATE][PDS][PUT_MISSING] will_create error={}", msg);
+                                } else {
+                                    println!("[BLOG][UPDATE][PDS][PUT_FAIL] error={}", msg);
+                                }
+                            }
+                        }
+
+                        if !did_put {
+                            // Fallback: create the record (idempotent-ish if not existing)
+                            let attempt_create = |validate_flag: bool, record_json: &serde_json::Value| {
+                                atrium_api::com::atproto::repo::create_record::InputData {
+                                    repo: did_parsed.clone().into(),
+                                    collection: Nsid::new(collection.clone()).unwrap(),
+                                    rkey: Some(RecordKey::new(rkey.clone()).unwrap()),
+                                    validate: Some(validate_flag),
+                                    swap_commit: None,
+                                    record: record_json.clone().try_into_unknown().unwrap(),
+                                }
+                            };
+                            let mut create_input = attempt_create(true, &record_value);
+                            match agent.api.com.atproto.repo.create_record(create_input.clone().into()).await {
+                                Ok(resp) => {
+                                    println!("[BLOG][UPDATE][PDS][CREATE_SUCCESS] uri={} cid={:?}", resp.data.uri, resp.data.cid);
+                                }
+                                Err(e) => {
+                                    let msg = format!("{}", e);
+                                    if msg.contains("Lexicon not found") || msg.contains("schema") {
+                                        println!("[BLOG][UPDATE][PDS][CREATE_RETRY] validation=false reason=lexicon_not_found");
+                                        create_input = attempt_create(false, &record_value);
+                                        match agent.api.com.atproto.repo.create_record(create_input.into()).await {
+                                            Ok(resp2) => println!("[BLOG][UPDATE][PDS][CREATE_SUCCESS_NO_VALIDATION] uri={}", resp2.data.uri),
+                                            Err(e2) => println!("[BLOG][UPDATE][PDS][CREATE_FAIL_RETRY] error={}", e2),
+                                        }
+                                    } else {
+                                        println!("[BLOG][UPDATE][PDS][CREATE_FAIL] error={}", msg);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => println!("[BLOG][UPDATE][PDS][AUTH_FAIL] error={} local_update=true", e),
+                }
+            }
+        }
+    }
+
+    println!("✅ Successfully updated blog post: {} (local + attempted PDS sync) elapsed_ms={}", updated_post.title, start.elapsed().as_millis());
     Ok(Json(BlogPostResponse::from(&updated_post)))
 }
 
@@ -776,6 +886,7 @@ async fn list_published_posts(
 /// Display the blog list page
 async fn blog_list_handler(
     State(app_state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<BlogListTemplate, ErrorTemplate> {
     // Load all posts from database for display (for now, let's show all posts)
     let db_pool_arc = Arc::new(app_state.db_pool.clone());
@@ -796,6 +907,9 @@ async fn blog_list_handler(
         content: p.content.clone(),
         summary: p.summary.clone(),
         tags: p.tags.clone(),
+        formatted_tags: serde_json::from_str::<Vec<String>>(&p.tags).ok()
+            .map(|v| v.into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(", "))
+            .unwrap_or_default(),
         published: p.published,
         created_at: p.created_at.to_rfc3339(),
         updated_at: p.updated_at.to_rfc3339(),
@@ -803,6 +917,8 @@ async fn blog_list_handler(
 
     Ok(BlogListTemplate {
         posts: blog_posts,
+        success_message: params.get("success").cloned(),
+        error_message: params.get("error").cloned(),
     })
 }
 
@@ -821,22 +937,54 @@ struct CreateBlogPostForm {
     published: Option<String>, // Form checkboxes come as strings
 }
 
+/// Parse tags input which may be either a JSON array string (e.g. ["rust","atproto"]) or a
+/// comma-separated list (e.g. rust, atproto). Returns None if empty/blank.
+fn parse_tags_input(raw: &str) -> Option<Vec<String>> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() { return None; }
+
+    // Try JSON first if it looks like JSON array
+    if trimmed.starts_with('[') && trimmed.ends_with(']') {
+        if let Ok(mut vec) = serde_json::from_str::<Vec<String>>(trimmed) {
+            // Handle double-encoded array: ["[\"tag1\",\"tag2\"]"]
+            if vec.len() == 1 {
+                let inner = vec[0].trim();
+                if inner.starts_with('[') && inner.ends_with(']') {
+                    if let Ok(vec2) = serde_json::from_str::<Vec<String>>(inner) {
+                        vec = vec2;
+                    }
+                }
+            }
+            let cleaned: Vec<String> = vec.into_iter()
+                .map(|s| s.trim().trim_matches('\"').to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !cleaned.is_empty() { return Some(cleaned); } else { return None; }
+        }
+    }
+
+    // Fallback: comma separated
+    let parts: Vec<String> = trimmed.split(',')
+        .map(|s| s.trim().trim_matches('\"').to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if parts.is_empty() { None } else { Some(parts) }
+}
+
 /// Handle form submission to create a blog post
 async fn blog_create_form_handler_post(
     headers: HeaderMap,
     State(app_state): State<AppState>,
     Form(form): Form<CreateBlogPostForm>,
 ) -> Result<Redirect, ErrorTemplate> {
+    let start = std::time::Instant::now();
+    println!("[BLOG][CREATE][START] title='{}' published_flag={} time={}ms", form.title, form.published.is_some(), chrono::Utc::now().timestamp_millis());
     // Extract authenticated session
     let session = match extract_session(headers, State(app_state.clone())).await {
         Ok(session) => session,
         Err(_) => {
-            return Err(ErrorTemplate {
-                title: "Authentication Error".to_string(),
-                handle: None,
-                action: Some("create blog post".to_string()),
-                error: "Authentication required to create blog posts".to_string(),
-            });
+            println!("[BLOG][CREATE][AUTH][FAIL] no session_did elapsed_ms={}", start.elapsed().as_millis());
+            return Ok(Redirect::to("/posts?error=Auth%20required"));
         }
     };
 
@@ -844,10 +992,8 @@ async fn blog_create_form_handler_post(
     let rkey = format!("post-{}", chrono::Utc::now().timestamp_millis());
     let uri = format!("at://{}/com.crabdance.nandi.post/{}", session.did, rkey);
 
-    // Parse tags from comma-separated string
-    let tags = form.tags
-        .map(|t| t.split(',').map(|tag| tag.trim().to_string()).collect::<Vec<_>>())
-        .filter(|tags| !tags.is_empty());
+    // Parse tags (supports JSON array or comma-separated list)
+    let tags = form.tags.as_ref().and_then(|s| parse_tags_input(s));
 
     // Create BlogPostRecordData from form
     let record_data = BlogPostRecordData {
@@ -884,7 +1030,7 @@ async fn blog_create_form_handler_post(
         }
     })?;
 
-    println!("✅ Successfully saved blog post locally: {}", blog_post.title);
+    println!("[BLOG][CREATE][LOCAL][OK] uri={} elapsed_ms={}", blog_post.uri, start.elapsed().as_millis());
 
     // Now attempt to post to the PDS
     let did_parsed = Did::new(session.did.clone()).map_err(|_| {
@@ -929,37 +1075,36 @@ async fn blog_create_form_handler_post(
 
             match agent.api.com.atproto.repo.create_record(create_record_input.into()).await {
                 Ok(response) => {
-                    println!("🎉 Successfully posted to PDS! URI: {}", response.data.uri);
-                    println!("📝 CID: {:?}", response.data.cid);
+                    println!("[BLOG][CREATE][PDS][SUCCESS] uri={} cid={:?} elapsed_ms={}", response.data.uri, response.data.cid, start.elapsed().as_millis());
                 }
                 Err(e) => {
-                    println!("⚠️  First attempt failed: {}", e);
+                    println!("[BLOG][CREATE][PDS][WARN] first_attempt_failed error={}", e);
                     let msg = format!("{}", e);
                     if msg.contains("Lexicon not found") || msg.contains("schema") {
-                        println!("🔁 Retrying without validation to store opaque record (lexicon unresolved)...");
+                        println!("[BLOG][CREATE][PDS][RETRY] validation=false reason=lexicon_not_found");
                         create_record_input = attempt_create(false, &record_value);
                         match agent.api.com.atproto.repo.create_record(create_record_input.into()).await {
                             Ok(response2) => {
-                                println!("✅ Stored record without validation. URI: {} (lexicon unresolved)", response2.data.uri);
+                                println!("[BLOG][CREATE][PDS][SUCCESS_NO_VALIDATION] uri={} elapsed_ms={}", response2.data.uri, start.elapsed().as_millis());
                             }
                             Err(e2) => {
-                                println!("❌ Retry also failed (saved locally only): {}", e2);
+                                println!("[BLOG][CREATE][PDS][ERROR_RETRY] error={}", e2);
                             }
                         }
                     } else {
-                        println!("⚠️  Failed to post to PDS (saved locally): {}", msg);
+                        println!("[BLOG][CREATE][PDS][FAIL] error={} saved_locally=true", msg);
                     }
                 }
             }
         }
         Err(e) => {
-            println!("⚠️  Could not authenticate with PDS (saved locally): {}", e);
+        println!("[BLOG][CREATE][PDS][AUTH_FAIL] error={} saved_locally=true", e);
             // We still continue since the post is saved locally
         }
     }
 
-    println!("✅ Blog post creation completed");
-    Ok(Redirect::to("/blog"))
+    println!("[BLOG][CREATE][END] total_elapsed_ms={}", start.elapsed().as_millis());
+    Ok(Redirect::to("/posts?success=Created%20post"))
 }
 
 /// Display a specific blog post
@@ -994,6 +1139,9 @@ async fn blog_view_handler(
         content: post.content.clone(),
         summary: post.summary.clone(),
         tags: post.tags.clone(),
+        formatted_tags: serde_json::from_str::<Vec<String>>(&post.tags).ok()
+            .map(|v| v.into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(", "))
+            .unwrap_or_default(),
         published: post.published,
         created_at: post.created_at.to_rfc3339(),
         updated_at: post.updated_at.to_rfc3339(),
@@ -1036,6 +1184,9 @@ async fn blog_edit_form_handler(
         content: post.content.clone(),
         summary: post.summary.clone(),
         tags: post.tags.clone(),
+        formatted_tags: serde_json::from_str::<Vec<String>>(&post.tags).ok()
+            .map(|v| v.into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(", "))
+            .unwrap_or_default(),
         published: post.published,
         created_at: post.created_at.to_rfc3339(),
         updated_at: post.updated_at.to_rfc3339(),
@@ -1062,6 +1213,9 @@ async fn blog_edit_form_handler_post(
     axum::extract::Path(uri): axum::extract::Path<String>,
     Form(form): Form<UpdateBlogPostForm>,
 ) -> Result<Redirect, ErrorTemplate> {
+    let start = std::time::Instant::now();
+    println!("[BLOG][EDIT_FORM][START] uri='{}' ts={}ms", uri, chrono::Utc::now().timestamp_millis());
+    // (Future) enforce auth here as well (e.g. compare session cookie DID to post DID)
     // Load the existing post from database
     let db_pool_arc = Arc::new(app_state.db_pool.clone());
     let posts = BlogPostFromDb::load_latest_posts(&db_pool_arc).await
@@ -1100,9 +1254,7 @@ async fn blog_edit_form_handler_post(
     record_data.summary = form.summary.filter(|s| !s.is_empty());
     
     // Parse tags from comma-separated string
-    record_data.tags = form.tags
-        .map(|t| t.split(',').map(|tag| tag.trim().to_string()).collect::<Vec<_>>())
-        .filter(|tags| !tags.is_empty());
+    record_data.tags = form.tags.as_ref().and_then(|s| parse_tags_input(s));
     
     record_data.published = Some(form.published.is_some());
     
@@ -1134,57 +1286,113 @@ async fn blog_edit_form_handler_post(
             }
         })?;
 
-    println!("✅ Successfully updated blog post: {}", updated_post.title);
-    Ok(Redirect::to("/blog"))
+    // Attempt to sync to PDS (best-effort, non-fatal). We use the post's author DID.
+    if let Ok(did_parsed) = Did::new(updated_post.author_did.clone()) {
+        match app_state.oauth_client.restore(&did_parsed).await {
+            Ok(oauth_session) => {
+                let agent = Agent::new(oauth_session);
+                // Derive collection and rkey from URI at://did/collection/rkey
+                let parts: Vec<&str> = updated_post.uri.split('/').collect();
+                if parts.len() >= 5 { // at:, '', did, collection, rkey
+                    let collection = parts[3].to_string();
+                    let rkey = parts[4].to_string();
+                    if collection == "com.crabdance.nandi.post" {
+                        // Build record JSON with $type
+                        let mut record_value = serde_json::to_value(&record_data).unwrap_or_else(|_| serde_json::json!({}));
+                        if let serde_json::Value::Object(obj) = &mut record_value {
+                            obj.insert("$type".to_string(), serde_json::Value::String(collection.clone()));
+                        }
+                        let attempt_put = |validate_flag: bool, record_json: &serde_json::Value| {
+                            atrium_api::com::atproto::repo::put_record::InputData {
+                                repo: did_parsed.clone().into(),
+                                collection: Nsid::new(collection.clone()).unwrap(),
+                                rkey: RecordKey::new(rkey.clone()).unwrap(),
+                                validate: Some(validate_flag),
+                                swap_record: None,
+                                swap_commit: None,
+                                record: record_json.clone().try_into_unknown().unwrap(),
+                            }
+                        };
+                        let mut put_input = attempt_put(true, &record_value);
+                        let mut did_put = false;
+                        match agent.api.com.atproto.repo.put_record(put_input.clone().into()).await {
+                            Ok(resp) => { println!("[BLOG][EDIT_FORM][PDS][PUT_SUCCESS] uri={} cid={:?}", resp.data.uri, resp.data.cid); did_put = true; }
+                            Err(e) => {
+                                let msg = format!("{}", e);
+                                if msg.contains("Lexicon not found") || msg.contains("schema") { // retry without validation
+                                    println!("[BLOG][EDIT_FORM][PDS][PUT_RETRY] validation=false reason=lexicon_not_found");
+                                    put_input = attempt_put(false, &record_value);
+                                    match agent.api.com.atproto.repo.put_record(put_input.into()).await {
+                                        Ok(resp2) => { println!("[BLOG][EDIT_FORM][PDS][PUT_SUCCESS_NO_VALIDATION] uri={}", resp2.data.uri); did_put = true; }
+                                        Err(e2) => println!("[BLOG][EDIT_FORM][PDS][PUT_FAIL_RETRY] error={}", e2),
+                                    }
+                                } else if msg.contains("Record not found") || msg.contains("Could not find record") {
+                                    println!("[BLOG][EDIT_FORM][PDS][PUT_MISSING] will_attempt_create");
+                                } else {
+                                    println!("[BLOG][EDIT_FORM][PDS][PUT_FAIL] error={}", msg);
+                                }
+                            }
+                        }
+                        if !did_put {
+                            let attempt_create = |validate_flag: bool, record_json: &serde_json::Value| {
+                                atrium_api::com::atproto::repo::create_record::InputData {
+                                    repo: did_parsed.clone().into(),
+                                    collection: Nsid::new(collection.clone()).unwrap(),
+                                    rkey: Some(RecordKey::new(rkey.clone()).unwrap()),
+                                    validate: Some(validate_flag),
+                                    swap_commit: None,
+                                    record: record_json.clone().try_into_unknown().unwrap(),
+                                }
+                            };
+                            let mut create_input = attempt_create(true, &record_value);
+                            match agent.api.com.atproto.repo.create_record(create_input.clone().into()).await {
+                                Ok(resp) => println!("[BLOG][EDIT_FORM][PDS][CREATE_SUCCESS] uri={} cid={:?}", resp.data.uri, resp.data.cid),
+                                Err(e) => {
+                                    let msg = format!("{}", e);
+                                    if msg.contains("Lexicon not found") || msg.contains("schema") {
+                                        println!("[BLOG][EDIT_FORM][PDS][CREATE_RETRY] validation=false reason=lexicon_not_found");
+                                        create_input = attempt_create(false, &record_value);
+                                        match agent.api.com.atproto.repo.create_record(create_input.into()).await {
+                                            Ok(resp2) => println!("[BLOG][EDIT_FORM][PDS][CREATE_SUCCESS_NO_VALIDATION] uri={}", resp2.data.uri),
+                                            Err(e2) => println!("[BLOG][EDIT_FORM][PDS][CREATE_FAIL_RETRY] error={}", e2),
+                                        }
+                                    } else {
+                                        println!("[BLOG][EDIT_FORM][PDS][CREATE_FAIL] error={}", msg);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => println!("[BLOG][EDIT_FORM][PDS][AUTH_FAIL] error={} local_update=true", e),
+        }
+    }
+
+    println!("✅ Successfully updated blog post (form) elapsed_ms={}", start.elapsed().as_millis());
+    Ok(Redirect::to("/posts?success=Updated%20post"))
 }
 
 /// Display the delete confirmation for a blog post
-async fn blog_delete_form_handler(
-    State(app_state): State<AppState>,
-    axum::extract::Path(uri): axum::extract::Path<String>,
-) -> Result<BlogDeleteTemplate, ErrorTemplate> {
-    // Load the specific post from database
-    let db_pool_arc = Arc::new(app_state.db_pool.clone());
-    let posts = BlogPostFromDb::load_latest_posts(&db_pool_arc).await
-        .map_err(|e| {
-            ErrorTemplate {
-                title: "Database Error".to_string(),
-                handle: None,
-                action: Some("load blog post".to_string()),
-                error: format!("Failed to load posts: {}", e),
-            }
-        })?;
-
-    // Find the post with the matching URI
-    let post = posts.into_iter().find(|p| p.uri == uri)
-        .ok_or_else(|| ErrorTemplate {
-            title: "Not Found".to_string(),
-            handle: None,
-            action: Some("find blog post".to_string()),
-            error: "Blog post not found".to_string(),
-        })?;
-
-    let blog_post_info = BlogPostInfo {
-        uri: post.uri.clone(),
-        title: post.title.clone(),
-        content: post.content.clone(),
-        summary: post.summary.clone(),
-        tags: post.tags.clone(),
-        published: post.published,
-        created_at: post.created_at.to_rfc3339(),
-        updated_at: post.updated_at.to_rfc3339(),
-    };
-
-    Ok(BlogDeleteTemplate {
-        post: blog_post_info,
-    })
-}
 
 /// Handle form submission to delete a blog post
 async fn blog_delete_form_handler_post(
     State(app_state): State<AppState>,
-    axum::extract::Path(uri): axum::extract::Path<String>,
+    axum::extract::Path(rkey): axum::extract::Path<String>,
 ) -> Result<Redirect, ErrorTemplate> {
+    // (Future) enforce auth here as well
+    // Load posts to resolve full URI from record key
+    let db_pool_arc = Arc::new(app_state.db_pool.clone());
+    let posts = BlogPostFromDb::load_latest_posts(&db_pool_arc).await.map_err(|e| ErrorTemplate {
+        title: "Database Error".to_string(),
+        handle: None,
+        action: Some("load blog posts".to_string()),
+        error: format!("Failed to load posts: {}", e),
+    })?;
+    let uri = match posts.into_iter().find(|p| p.uri.rsplit('/').next() == Some(rkey.as_str())) {
+        Some(p) => p.uri,
+        None => return Err(ErrorTemplate { title: "Not Found".to_string(), handle: None, action: Some("delete blog post".to_string()), error: "Blog post not found".to_string() }),
+    };
     // Delete the post from database
     BlogPostFromDb::delete_by_uri(&app_state.db_pool, uri.clone()).await
         .map_err(|e| {
@@ -1197,5 +1405,5 @@ async fn blog_delete_form_handler_post(
         })?;
 
     println!("✅ Successfully deleted blog post with URI: {}", uri);
-    Ok(Redirect::to("/blog"))
+    Ok(Redirect::to("/posts?success=Deleted%20post"))
 }

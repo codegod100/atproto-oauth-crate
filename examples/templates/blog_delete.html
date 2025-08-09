@@ -10,8 +10,9 @@
     <p>This action cannot be undone.</p>
 </div>
 
-<form action="/blog/delete/{{ post.uri|urlencode }}" method="post">
+{% set rkey = post.uri.split('/').last().unwrap() %}
+<form action="/posts/delete/{{ rkey }}" method="post">
     <button type="submit" class="button" style="background: #dc3545;">🗑️ Yes, Delete Post</button>
-    <a href="/blog" class="button">👈 Cancel</a>
+    <a href="/posts" class="button">👈 Cancel</a>
 </form>
 {% endblock %}

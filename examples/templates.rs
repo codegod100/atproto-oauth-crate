@@ -1,3 +1,4 @@
+// BlogDeleteTemplate removed (inline JS confirm + direct POST used instead)
 use atproto_oauth::Template;
 
 #[derive(Template)]
@@ -24,6 +25,8 @@ pub struct ErrorTemplate {
 #[template(path = "blog_list.html", config = "examples/askama.toml")]
 pub struct BlogListTemplate {
     pub posts: Vec<BlogPostInfo>,
+    pub success_message: Option<String>,
+    pub error_message: Option<String>,
 }
 
 #[derive(Template)]
@@ -42,15 +45,8 @@ pub struct BlogViewTemplate {
     pub post: BlogPostInfo,
 }
 
-#[derive(Template)]
-#[template(path = "blog_delete.html", config = "examples/askama.toml")]
-pub struct BlogDeleteTemplate {
-    pub post: BlogPostInfo,
-}
 
-#[derive(Template)]
-#[template(path = "test.html", config = "examples/askama.toml")]
-pub struct TestTemplate;
+// TestTemplate removed
 
 #[derive(Debug)]
 pub struct UserInfo {
@@ -70,6 +66,7 @@ pub struct BlogPostInfo {
     pub content: String,
     pub summary: Option<String>,
     pub tags: String, // JSON serialized array
+    pub formatted_tags: String, // human editable comma list (no brackets) for form
     pub published: bool,
     pub created_at: String, // RFC3339 formatted
     pub updated_at: String, // RFC3339 formatted

@@ -5,7 +5,7 @@
 {% block content %}
 <h1>➕ Create New Blog Post</h1>
 
-<form action="/blog/create" method="post">
+<form action="/posts/create" method="post">
     <div>
         <label for="title">Title:</label><br>
         <input type="text" id="title" name="title" required style="width: 100%; padding: 8px; margin: 10px 0;">
@@ -33,6 +33,6 @@
     </div>
     
     <button type="submit" class="button">💾 Save Post</button>
-    <a href="/blog" class="button">👈 Back to Posts</a>
+    <a href="/posts" class="button">👈 Back to Posts</a>
 </form>
 {% endblock %}
