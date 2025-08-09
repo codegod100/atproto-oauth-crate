@@ -41,6 +41,40 @@ struct AppState {
     db_pool: Arc<Pool>,
 }
 
+async fn register_custom_lexicon(
+    agent: &Agent<impl SessionManager + Send + Sync>,
+    did: &str, 
+    lexicon_nsid: &str
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Read the lexicon definition from file
+    let lexicon_json = std::fs::read_to_string("examples/lexicons/post.json")?;
+    let lexicon_data: serde_json::Value = serde_json::from_str(&lexicon_json)?;
+    
+    // Create the lexicon schema record
+    let did_parsed = did.parse::<Did>()?;
+    let rkey = lexicon_nsid; // Use the NSID as the record key
+    
+    let create_record_input = atrium_api::com::atproto::repo::create_record::InputData {
+        repo: did_parsed.into(),
+        collection: Nsid::new("com.atproto.lexicon.schema".to_string()).unwrap(),
+        rkey: Some(RecordKey::new(rkey.to_string()).unwrap()),
+        validate: Some(true),
+        swap_commit: None,
+        record: lexicon_data.try_into_unknown()?,
+    };
+
+    match agent.api.com.atproto.repo.create_record(create_record_input.into()).await {
+        Ok(response) => {
+            println!("✅ Successfully registered lexicon! URI: {}", response.data.uri);
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to register lexicon: {}", e);
+            Err(Box::new(e))
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
@@ -861,6 +895,12 @@ async fn blog_create_form_handler_post(
         Ok(oauth_session) => {
             // Create agent from the restored OAuth session
             let agent = Agent::new(oauth_session);
+            
+            // First, try to register our custom lexicon
+            let lexicon_nsid = "xyz.blogosphere.post";
+            if let Err(e) = register_custom_lexicon(&agent, &session.did, lexicon_nsid).await {
+                eprintln!("⚠️ Failed to register lexicon (continuing anyway): {}", e);
+            }
             
             // Create the record on the PDS
             let create_record_input = atrium_api::com::atproto::repo::create_record::InputData {
