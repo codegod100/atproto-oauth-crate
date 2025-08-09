@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block title %}{{ post.title }} - AT Protocol OAuth Example{% endblock %}
+
+{% block content %}
+<h1>{{ post.title }}</h1>
+
+<div class="info">
+    <p><strong>Published:</strong> {% if post.published %}Yes{% else %}No{% endif %}</p>
+    <p><strong>Created:</strong> {{ post.created_at }}</p>
+    <p><strong>Updated:</strong> {{ post.updated_at }}</p>
+    <p><strong>Tags:</strong> {{ post.tags }}</p>
+</div>
+
+{% if post.summary.is_some() %}
+    <div class="info">
+        <h3>Summary</h3>
+        <p>{{ post.summary.as_ref().unwrap() }}</p>
+    </div>
+{% endif %}
+
+<div class="info">
+    <h3>Content</h3>
+    <pre style="white-space: pre-wrap;">{{ post.content }}</pre>
+</div>
+
+<div>
+    <a href="/blog/edit/{{ post.uri|urlencode }}" class="button">✏️ Edit</a>
+    <a href="/blog/delete/{{ post.uri|urlencode }}" class="button" onclick="return confirm('Are you sure you want to delete this post?')">🗑️ Delete</a>
+    <a href="/blog" class="button">👈 Back to Posts</a>
+</div>
+{% endblock %}

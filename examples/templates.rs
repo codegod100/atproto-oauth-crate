@@ -20,6 +20,38 @@ pub struct ErrorTemplate {
     pub error: String,
 }
 
+#[derive(Template)]
+#[template(path = "blog_list.html", config = "examples/askama.toml")]
+pub struct BlogListTemplate {
+    pub posts: Vec<BlogPostInfo>,
+}
+
+#[derive(Template)]
+#[template(path = "blog_create.html", config = "examples/askama.toml")]
+pub struct BlogCreateTemplate;
+
+#[derive(Template)]
+#[template(path = "blog_edit.html", config = "examples/askama.toml")]
+pub struct BlogEditTemplate {
+    pub post: BlogPostInfo,
+}
+
+#[derive(Template)]
+#[template(path = "blog_view.html", config = "examples/askama.toml")]
+pub struct BlogViewTemplate {
+    pub post: BlogPostInfo,
+}
+
+#[derive(Template)]
+#[template(path = "blog_delete.html", config = "examples/askama.toml")]
+pub struct BlogDeleteTemplate {
+    pub post: BlogPostInfo,
+}
+
+#[derive(Template)]
+#[template(path = "test.html", config = "examples/askama.toml")]
+pub struct TestTemplate;
+
 #[derive(Debug)]
 pub struct UserInfo {
     pub handle: Option<String>,
@@ -29,4 +61,16 @@ pub struct UserInfo {
     pub follows_count: Option<u32>,
     pub posts_count: Option<u32>,
     pub description: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BlogPostInfo {
+    pub uri: String,
+    pub title: String,
+    pub content: String,
+    pub summary: Option<String>,
+    pub tags: String, // JSON serialized array
+    pub published: bool,
+    pub created_at: String, // RFC3339 formatted
+    pub updated_at: String, // RFC3339 formatted
 }

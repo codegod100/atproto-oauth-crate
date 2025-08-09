@@ -347,6 +347,29 @@ impl BlogPostFromDb {
         .await
     }
 
+    /// Load a specific blog post by URI
+    pub async fn load_by_uri(
+        pool: &Arc<Pool>,
+        uri: &str,
+    ) -> Result<Option<Self>, async_sqlite::Error> {
+        let uri = uri.to_string();
+        pool.conn(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT * FROM blog_posts WHERE uri = ?1",
+            )?;
+            stmt.query_row([uri.as_str()], |row| Self::map_from_row(row))
+                .map(Some)
+                .or_else(|err| {
+                    if err == rusqlite::Error::QueryReturnedNoRows {
+                        Ok(None)
+                    } else {
+                        Err(err)
+                    }
+                })
+        })
+        .await
+    }
+
     /// UI helper to show a handle or DID if the handle cannot be found
     pub fn author_display_name(&self) -> String {
         match self.handle.as_ref() {

@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Blog Post - AT Protocol OAuth Example{% endblock %}
+
+{% block content %}
+<h1>✏️ Edit Blog Post</h1>
+
+<form action="/blog/update/{{ post.uri|urlencode }}" method="post">
+    <div>
+        <label for="title">Title:</label><br>
+        <input type="text" id="title" name="title" value="{{ post.title }}" required style="width: 100%; padding: 8px; margin: 10px 0;">
+    </div>
+    
+    <div>
+        <label for="summary">Summary (optional):</label><br>
+        <input type="text" id="summary" name="summary" value="{% if post.summary.is_some() %}{{ post.summary.as_ref().unwrap() }}{% endif %}" style="width: 100%; padding: 8px; margin: 10px 0;">
+    </div>
+    
+    <div>
+        <label for="content">Content:</label><br>
+        <textarea id="content" name="content" required rows="10" style="width: 100%; padding: 8px; margin: 10px 0;">{{ post.content }}</textarea>
+    </div>
+    
+    <div>
+        <label for="tags">Tags (comma separated, optional):</label><br>
+        <input type="text" id="tags" name="tags" value="{{ post.tags }}" placeholder="rust, atproto, blog" style="width: 100%; padding: 8px; margin: 10px 0;">
+    </div>
+    
+    <div>
+        <label>
+            <input type="checkbox" name="published" value="true" {% if post.published %}checked{% endif %}> Publish this post
+        </label>
+    </div>
+    
+    <button type="submit" class="button">💾 Update Post</button>
+    <a href="/blog" class="button">👈 Back to Posts</a>
+</form>
+{% endblock %}
