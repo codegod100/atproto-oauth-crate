@@ -1,5 +1,5 @@
 # Use the official Rust image as base
-FROM rust:1.75-slim-bullseye AS builder
+FROM rust:1.82-slim-bookworm AS builder
 
 # Install system dependencies needed for compilation
 RUN apt-get update && apt-get install -y \
@@ -27,12 +27,12 @@ COPY examples ./examples
 RUN cargo build --release --examples
 
 # Runtime stage
-FROM debian:bullseye-slim AS runtime
+FROM debian:bookworm-slim AS runtime
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     ca-certificates \
-    libssl1.1 \
+    libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create a non-root user
