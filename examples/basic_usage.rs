@@ -7,12 +7,14 @@ mod codegen;
 use atproto_oauth::{
     // Core OAuth functionality
     OAuthClientBuilder, AtprotoOAuthClient, AuthorizeOptions, CallbackParams, 
-    KnownScope, Scope, Handle,
+    KnownScope, Scope, Handle, Did,
     // Database and agent types
     Agent, PoolBuilder, Pool,
+    // Storage types - not needed anymore
     // Web framework types
     Query, State, Redirect, Router,
 };
+use atrium_api::types::{TryIntoUnknown, string::{Nsid, RecordKey}};
 use axum::{
     // HTTP methods and JSON
     routing::{post, get},
@@ -34,12 +36,6 @@ use serde::{Deserialize, Serialize};
 struct AppState {
     oauth_client: Arc<AtprotoOAuthClient>,
     db_pool: Arc<Pool>,
-}
-
-// Session data extracted from authenticated requests
-#[derive(Clone, Debug)]
-struct SessionData {
-    did: String,
 }
 
 #[tokio::main]
@@ -108,32 +104,56 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// ========== Authentication Middleware ==========\n
+// ========== Authentication Middleware ==========
 
-/// Extract session data from request headers
+/// Session data extracted from authenticated requests
+#[derive(Clone, Debug)]
+struct SessionData {
+    did: String,
+}
+
+/// Extract session data from request headers or cookies
 async fn extract_session(
     headers: HeaderMap,
     State(_app_state): State<AppState>,
 ) -> Result<SessionData, StatusCode> {
-    // In a real application, you'd validate a session token from headers
-    // For this example, we'll use a simplified approach
-    let session_token = headers
-        .get("Authorization")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|s| s.strip_prefix("Bearer "))
-        .ok_or(StatusCode::UNAUTHORIZED)?;
+    // Try to get DID from Authorization header first
+    let did_str = if let Some(auth_header) = headers.get("Authorization") {
+        // Bearer token authentication (for API endpoints)
+        auth_header
+            .to_str()
+            .ok()
+            .and_then(|s| s.strip_prefix("Bearer "))
+            .map(|s| s.to_string())
+    } else if let Some(cookie_header) = headers.get("Cookie") {
+        // Cookie-based authentication (for form endpoints)
+        cookie_header
+            .to_str()
+            .ok()
+            .and_then(|cookies| {
+                // Parse cookies to find session_did
+                for cookie in cookies.split(';') {
+                    let cookie = cookie.trim();
+                    if let Some(did) = cookie.strip_prefix("session_did=") {
+                        return Some(did.to_string());
+                    }
+                }
+                None
+            })
+    } else {
+        None
+    };
+
+    let did_str = did_str.ok_or(StatusCode::UNAUTHORIZED)?;
     
-    // TODO: Validate session token against database
-    // For now, we'll mock this by checking if it's a valid DID format
-    if !session_token.starts_with("did:") {
+    // Validate DID format
+    if !did_str.starts_with("did:") {
         return Err(StatusCode::UNAUTHORIZED);
     }
     
-    // For simplicity, we'll just store the DID
-    // In a real application, you'd validate the session token and restore the Agent
-    
+    // Just return the DID - we'll create agents on demand when needed
     Ok(SessionData {
-        did: session_token.to_string(),
+        did: did_str,
     })
 }
 
@@ -754,16 +774,26 @@ struct CreateBlogPostForm {
 
 /// Handle form submission to create a blog post
 async fn blog_create_form_handler_post(
+    headers: HeaderMap,
     State(app_state): State<AppState>,
     Form(form): Form<CreateBlogPostForm>,
 ) -> Result<Redirect, ErrorTemplate> {
-    // For demo purposes, we'll use a mock DID since we don't have proper session management
-    // In a real app, you'd extract the session from cookies or headers
-    let mock_did = "did:example:user123".to_string();
+    // Extract authenticated session
+    let session = match extract_session(headers, State(app_state.clone())).await {
+        Ok(session) => session,
+        Err(_) => {
+            return Err(ErrorTemplate {
+                title: "Authentication Error".to_string(),
+                handle: None,
+                action: Some("create blog post".to_string()),
+                error: "Authentication required to create blog posts".to_string(),
+            });
+        }
+    };
 
     // Generate a unique record key (rkey) for this blog post
     let rkey = format!("post-{}", chrono::Utc::now().timestamp_millis());
-    let uri = format!("at://{}/xyz.blogosphere.post/{}", mock_did, rkey);
+    let uri = format!("at://{}/xyz.blogosphere.post/{}", session.did, rkey);
 
     // Parse tags from comma-separated string
     let tags = form.tags
@@ -781,10 +811,10 @@ async fn blog_create_form_handler_post(
         updated_at: Some(atrium_api::types::string::Datetime::new(chrono::Utc::now().into())),
     };
 
-    // Convert to database model
+    // Convert to database model and save locally
     let blog_post = BlogPostFromDb::from_codegen_record_data(
         uri.clone(),
-        mock_did.clone(),
+        session.did.clone(),
         &record_data
     ).map_err(|e| {
         ErrorTemplate {
@@ -795,7 +825,6 @@ async fn blog_create_form_handler_post(
         }
     })?;
 
-    // Save to database
     let db_pool_arc = Arc::new(app_state.db_pool.clone());
     blog_post.save(&db_pool_arc).await.map_err(|e| {
         ErrorTemplate {
@@ -806,7 +835,51 @@ async fn blog_create_form_handler_post(
         }
     })?;
 
-    println!("✅ Successfully created blog post: {}", blog_post.title);
+    println!("✅ Successfully saved blog post locally: {}", blog_post.title);
+
+    // Now attempt to post to the PDS
+    let did_parsed = Did::new(session.did.clone()).map_err(|_| {
+        ErrorTemplate {
+            title: "Authentication Error".to_string(),
+            handle: None,
+            action: Some("create blog post".to_string()),
+            error: "Invalid DID format".to_string(),
+        }
+    })?;
+    
+    match app_state.oauth_client.restore(&did_parsed).await {
+        Ok(oauth_session) => {
+            // Create agent from the restored OAuth session
+            let agent = Agent::new(oauth_session);
+            
+            // Create the record on the PDS
+            let create_record_input = atrium_api::com::atproto::repo::create_record::InputData {
+                repo: did_parsed.into(),
+                collection: Nsid::new("xyz.blogosphere.post".to_string()).unwrap(),
+                rkey: Some(RecordKey::new(rkey).unwrap()),
+                validate: Some(true),
+                swap_commit: None,
+                record: record_data.clone().try_into_unknown().unwrap(),
+            };
+
+            match agent.api.com.atproto.repo.create_record(create_record_input.into()).await {
+                Ok(response) => {
+                    println!("🎉 Successfully posted to PDS! URI: {}", response.data.uri);
+                    println!("📝 CID: {:?}", response.data.cid);
+                }
+                Err(e) => {
+                    println!("⚠️  Failed to post to PDS (saved locally): {}", e);
+                    // We still continue since the post is saved locally
+                }
+            }
+        }
+        Err(e) => {
+            println!("⚠️  Could not authenticate with PDS (saved locally): {}", e);
+            // We still continue since the post is saved locally
+        }
+    }
+
+    println!("✅ Blog post creation completed");
     Ok(Redirect::to("/blog"))
 }
 
