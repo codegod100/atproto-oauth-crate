@@ -15,17 +15,20 @@ use atproto_oauth::{
     Query, State, Redirect, Router,
 };
 use atrium_api::types::{TryIntoUnknown, string::{Nsid, RecordKey}};
+use atrium_api::agent::SessionManager;
 use axum::{
     // HTTP methods and JSON
     routing::{post, get},
     Json,
     // Response types
     http::{StatusCode, HeaderMap},
+    response::{Response, Html},
     // Form handling
     extract::Form,
 };
 use schema::{create_tables_in_database, BlogPostFromDb};
 use templates::{HomeTemplate, SuccessTemplate, ErrorTemplate, UserInfo, BlogListTemplate, BlogCreateTemplate, BlogEditTemplate, BlogViewTemplate, BlogDeleteTemplate, BlogPostInfo};
+use askama::Template;
 use codegen::xyz::blogosphere::post::RecordData as BlogPostRecordData;
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
@@ -273,20 +276,20 @@ async fn login_handler(
 async fn callback_handler(
     Query(params): Query<CallbackParams>,
     State(app_state): State<AppState>,
-) -> Result<SuccessTemplate, ErrorTemplate> {
+) -> Result<(StatusCode, HeaderMap, Html<String>), ErrorTemplate> {
     println!("🔄 Processing OAuth callback");
     
     match (&*app_state.oauth_client).callback(params).await {
         Ok((session, _)) => {
-            println!("✅ OAuth flow completed successfully!");
+            println!("✅ OAuth callback successful");
             
-            // Create an agent to fetch user info
-            let agent = Agent::new(session);
-            
-            // Try to fetch user profile to showcase the working credentials
-            let user_info = match agent.did().await {
+            // Get user DID from session
+            let user_info = match session.did().await {
                 Some(did) => {
-                    println!("🔍 Fetching profile for DID: {}", did.as_str());
+                    println!("👤 User DID: {}", did.as_str());
+                    
+                    // Create agent to fetch profile
+                    let agent = Agent::new(session);
                     match agent
                         .api
                         .app
@@ -332,18 +335,25 @@ async fn callback_handler(
                 }
             };
 
-            // TODO: Demonstrate creating a sample blog post using generated codegen types
-            // This would require restructuring the app state to include the database pool
-            // if let Some(ref info) = user_info {
-            //     if let Some(ref did) = info.did {
-            //         let _ = create_sample_blog_post(&db_pool, did).await;
-            //     }
-            // }
+            // Create response with session cookie
+            let mut headers = HeaderMap::new();
+            
+            // Set session cookie with the DID
+            if let Some(ref info) = user_info {
+                if let Some(ref did) = info.did {
+                    let cookie_value = format!("session_did={}; Path=/; HttpOnly; SameSite=Lax", did);
+                    headers.insert("Set-Cookie", cookie_value.parse().unwrap());
+                }
+            }
 
-            Ok(SuccessTemplate {
+            let template = SuccessTemplate {
                 user_info,
                 error_message: None,
-            })
+            };
+            
+            let html = template.render().unwrap();
+            
+            Ok((StatusCode::OK, headers, Html(html)))
         }
         Err(e) => {
             println!("❌ OAuth callback error: {}", e);
