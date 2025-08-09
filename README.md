@@ -10,80 +10,56 @@ A reusable Rust crate for implementing OAuth authentication with the AT Protocol
 - **Type Safety**: Strongly typed interfaces with comprehensive error handling
 - **Async Support**: Full async/await support with tokio
 
-## Quick Start
+## Examples
 
-Add this to your `Cargo.toml`:
+The crate includes comprehensive examples in the `examples/` directory:
 
-```toml
-[dependencies]
-atproto-oauth = "0.1.0"
-async-sqlite = "0.5.0"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+1. `basic_usage.rs` - A complete web application demonstrating OAuth authentication and blog post CRUD operations
+2. `schema.rs` - Database schema definitions for OAuth sessions and blog posts
+3. `templates.rs` - HTML templates for the web interface
+4. `lexicon.rs` - AT Protocol lexicon definitions
+5. Code generation outputs in the `codegen/` directory
+
+To run the basic example:
+
+```bash
+cargo run --example basic_usage
 ```
 
-## Basic Usage
+This will start a web server on `http://127.0.0.1:3000` with:
 
-```rust
-use atproto_oauth::{OAuthClientBuilder, db::create_tables_in_database};
-use async_sqlite::PoolBuilder;
+- OAuth authentication flow
+- Blog post CRUD operations (Create, Read, Update, Delete)
+- Database persistence using SQLite
+- Type-safe integration with AT Protocol lexicons
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create database connection
-    let db_pool = PoolBuilder::new()
-        .path("oauth.sqlite3")
-        .open()
-        .await?;
+## API Endpoints
 
-    // Create database tables
-    create_tables_in_database(&db_pool).await?;
+The example application provides the following API endpoints:
 
-    // Build OAuth client
-    let oauth_client = OAuthClientBuilder::new()
-        .host("localhost")
-        .port(3000)
-        .db_pool(db_pool)
-        .build()?;
+### OAuth Endpoints
+- `GET /` - Home page
+- `GET /login?handle={handle}` - Start OAuth flow for a given handle
+- `GET /oauth/callback` - OAuth callback handler
 
-    // Use in your web application...
-    Ok(())
-}
-```
+### Blog Post CRUD Endpoints
+- `POST /api/posts` - Create a new blog post (requires authentication)
+- `GET /api/posts` - List all published blog posts (public)
+- `GET /api/posts/my` - List authenticated user's blog posts (requires authentication)
+- `GET /api/posts/{uri}` - Get a specific blog post (requires authentication)
+- `PUT /api/posts/{uri}` - Update a specific blog post (requires authentication)
+- `DELETE /api/posts/{uri}` - Delete a specific blog post (requires authentication)
+
+All authenticated endpoints require an `Authorization: Bearer {did}` header where `{did}` is a valid DID (Decentralized Identifier).
 
 ## Web Framework Integration
 
-This crate is designed to work with web frameworks like Actix-web, Axum, or Warp. Here's an example with Actix-web:
+This crate is designed to work with web frameworks like Axum. The example demonstrates full integration with:
 
-```rust
-use actix_web::{web, App, HttpServer, HttpResponse};
-use atproto_oauth::{OAuthClientBuilder, AuthorizeOptions, KnownScope, Scope};
-
-async fn login_handler(
-    oauth_client: web::Data<AtprotoOAuthClient>,
-    form: web::Form<LoginForm>,
-) -> HttpResponse {
-    let oauth_url = oauth_client
-        .authorize(
-            &form.handle,
-            AuthorizeOptions {
-                scopes: vec![
-                    Scope::Known(KnownScope::Atproto),
-                    Scope::Known(KnownScope::TransitionGeneric),
-                ],
-                ..Default::default()
-            },
-        )
-        .await;
-
-    match oauth_url {
-        Ok(url) => HttpResponse::Found()
-            .append_header(("Location", url))
-            .finish(),
-        Err(err) => HttpResponse::InternalServerError()
-            .body(format!("OAuth error: {}", err)),
-    }
-}
-```
+- OAuth authentication flow
+- Session management
+- CRUD operations with database persistence
+- Type-safe API endpoints
 
 ## Configuration Options
 
