@@ -1,7 +1,6 @@
 /// Long-running example showing how to use the atproto-oauth crate with a web server
 mod schema;
 mod templates;
-mod lexicon;
 mod codegen;
 
 use atproto_oauth::{
@@ -22,14 +21,14 @@ use axum::{
     Json,
     // Response types
     http::{StatusCode, HeaderMap},
-    response::{Response, Html},
+    response::Html,
     // Form handling
     extract::Form,
 };
 use schema::{create_tables_in_database, BlogPostFromDb};
 use templates::{HomeTemplate, SuccessTemplate, ErrorTemplate, UserInfo, BlogListTemplate, BlogCreateTemplate, BlogEditTemplate, BlogViewTemplate, BlogDeleteTemplate, BlogPostInfo};
 use askama::Template;
-use codegen::xyz::blogosphere::post::RecordData as BlogPostRecordData;
+use codegen::com::crabdance::nandi::post::RecordData as BlogPostRecordData;
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 // Removed unused import
@@ -48,7 +47,12 @@ async fn register_custom_lexicon(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Read the lexicon definition from file
     let lexicon_json = std::fs::read_to_string("examples/lexicons/post.json")?;
-    let lexicon_data: serde_json::Value = serde_json::from_str(&lexicon_json)?;
+    let mut lexicon_data: serde_json::Value = serde_json::from_str(&lexicon_json)?;
+
+    // Ensure required $type is present per spec (com.atproto.lexicon.schema)
+    if let serde_json::Value::Object(map) = &mut lexicon_data {
+        map.entry("$type").or_insert(serde_json::Value::String("com.atproto.lexicon.schema".to_string()));
+    }
     
     // Create the lexicon schema record
     let did_parsed = did.parse::<Did>()?;
@@ -58,6 +62,7 @@ async fn register_custom_lexicon(
         repo: did_parsed.into(),
         collection: Nsid::new("com.atproto.lexicon.schema".to_string()).unwrap(),
         rkey: Some(RecordKey::new(rkey.to_string()).unwrap()),
+        // Allow server-side validation (must pass); if this fails we log and continue
         validate: Some(true),
         swap_commit: None,
         record: lexicon_data.try_into_unknown()?,
@@ -410,7 +415,7 @@ async fn create_sample_blog_post(pool: &atproto_oauth::Pool, author_did: &str) -
         title: "Welcome to AT Protocol Blogging!".to_string(),
         content: r#"# Hello AT Protocol!
 
-This is a sample blog post created using the **xyz.blogosphere.post** lexicon.
+This is a sample blog post created using the **com.crabdance.nandi.post** lexicon.
 
 ## Features
 
@@ -433,7 +438,7 @@ let record_data = BlogPostRecordData {
 ```
 
 The lexicon ensures type safety and validation according to the AT Protocol schema!"#.to_string(),
-        summary: Some("A sample blog post demonstrating the xyz.blogosphere.post lexicon with AT Protocol OAuth integration.".to_string()),
+    summary: Some("A sample blog post demonstrating the com.crabdance.nandi.post lexicon with AT Protocol OAuth integration.".to_string()),
         tags: Some(vec![
             "atproto".to_string(),
             "rust".to_string(),
@@ -447,7 +452,7 @@ The lexicon ensures type safety and validation according to the AT Protocol sche
     };
 
     // Create a sample URI for this post
-    let sample_uri = format!("at://{}/xyz.blogosphere.post/{}", author_did, "sample-post-123");
+    let sample_uri = format!("at://{}/com.crabdance.nandi.post/{}", author_did, "sample-post-123");
     
     // Convert to our database model
     let blog_post = BlogPostFromDb::from_codegen_record_data(
@@ -486,7 +491,7 @@ async fn create_blog_post(
 
     // Generate a unique record key (rkey) for this blog post
     let rkey = format!("post-{}", chrono::Utc::now().timestamp_millis());
-    let uri = format!("at://{}/xyz.blogosphere.post/{}", session.did, rkey);
+    let uri = format!("at://{}/com.crabdance.nandi.post/{}", session.did, rkey);
 
     // Create BlogPostRecordData from request
     let record_data = BlogPostRecordData {
@@ -837,7 +842,7 @@ async fn blog_create_form_handler_post(
 
     // Generate a unique record key (rkey) for this blog post
     let rkey = format!("post-{}", chrono::Utc::now().timestamp_millis());
-    let uri = format!("at://{}/xyz.blogosphere.post/{}", session.did, rkey);
+    let uri = format!("at://{}/com.crabdance.nandi.post/{}", session.did, rkey);
 
     // Parse tags from comma-separated string
     let tags = form.tags
@@ -897,20 +902,30 @@ async fn blog_create_form_handler_post(
             let agent = Agent::new(oauth_session);
             
             // First, try to register our custom lexicon
-            let lexicon_nsid = "xyz.blogosphere.post";
+            let lexicon_nsid = "com.crabdance.nandi.post";
             if let Err(e) = register_custom_lexicon(&agent, &session.did, lexicon_nsid).await {
                 eprintln!("⚠️ Failed to register lexicon (continuing anyway): {}", e);
             }
             
-            // Create the record on the PDS
-            let create_record_input = atrium_api::com::atproto::repo::create_record::InputData {
-                repo: did_parsed.into(),
-                collection: Nsid::new("xyz.blogosphere.post".to_string()).unwrap(),
-                rkey: Some(RecordKey::new(rkey).unwrap()),
-                validate: Some(true),
-                swap_commit: None,
-                record: record_data.clone().try_into_unknown().unwrap(),
+            // Build record JSON and inject $type (required for records)
+            let mut record_value = serde_json::to_value(&record_data).unwrap_or_else(|_| serde_json::json!({}));
+            if let serde_json::Value::Object(obj) = &mut record_value {
+                obj.insert("$type".to_string(), serde_json::Value::String("com.crabdance.nandi.post".to_string()));
+            }
+
+            // Try with validation first; if lexicon unresolved, retry without validation (best-effort)
+            let attempt_create = |validate_flag: bool, record_json: &serde_json::Value| {
+                atrium_api::com::atproto::repo::create_record::InputData {
+                    repo: did_parsed.clone().into(),
+                    collection: Nsid::new("com.crabdance.nandi.post".to_string()).unwrap(),
+                    rkey: Some(RecordKey::new(rkey.clone()).unwrap()),
+                    validate: Some(validate_flag),
+                    swap_commit: None,
+                    record: record_json.clone().try_into_unknown().unwrap(),
+                }
             };
+
+            let mut create_record_input = attempt_create(true, &record_value);
 
             match agent.api.com.atproto.repo.create_record(create_record_input.into()).await {
                 Ok(response) => {
@@ -918,8 +933,22 @@ async fn blog_create_form_handler_post(
                     println!("📝 CID: {:?}", response.data.cid);
                 }
                 Err(e) => {
-                    println!("⚠️  Failed to post to PDS (saved locally): {}", e);
-                    // We still continue since the post is saved locally
+                    println!("⚠️  First attempt failed: {}", e);
+                    let msg = format!("{}", e);
+                    if msg.contains("Lexicon not found") || msg.contains("schema") {
+                        println!("🔁 Retrying without validation to store opaque record (lexicon unresolved)...");
+                        create_record_input = attempt_create(false, &record_value);
+                        match agent.api.com.atproto.repo.create_record(create_record_input.into()).await {
+                            Ok(response2) => {
+                                println!("✅ Stored record without validation. URI: {} (lexicon unresolved)", response2.data.uri);
+                            }
+                            Err(e2) => {
+                                println!("❌ Retry also failed (saved locally only): {}", e2);
+                            }
+                        }
+                    } else {
+                        println!("⚠️  Failed to post to PDS (saved locally): {}", msg);
+                    }
                 }
             }
         }

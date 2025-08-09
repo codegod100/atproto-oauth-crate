@@ -3,17 +3,21 @@
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(tag = "$type")]
 pub enum KnownRecord {
-    #[serde(rename = "xyz.blogosphere.post")]
-    CodegenXyzBlogospherePost(Box<crate::codegen::xyz::blogosphere::post::Record>),
+    #[serde(rename = "com.crabdance.nandi.post")]
+    CodegenComCrabdanceNandiPost(
+        Box<crate::codegen::com::crabdance::nandi::post::Record>,
+    ),
 }
-impl From<crate::codegen::xyz::blogosphere::post::Record> for KnownRecord {
-    fn from(record: crate::codegen::xyz::blogosphere::post::Record) -> Self {
-        KnownRecord::CodegenXyzBlogospherePost(Box::new(record))
+impl From<crate::codegen::com::crabdance::nandi::post::Record> for KnownRecord {
+    fn from(record: crate::codegen::com::crabdance::nandi::post::Record) -> Self {
+        KnownRecord::CodegenComCrabdanceNandiPost(Box::new(record))
     }
 }
-impl From<crate::codegen::xyz::blogosphere::post::RecordData> for KnownRecord {
-    fn from(record_data: crate::codegen::xyz::blogosphere::post::RecordData) -> Self {
-        KnownRecord::CodegenXyzBlogospherePost(Box::new(record_data.into()))
+impl From<crate::codegen::com::crabdance::nandi::post::RecordData> for KnownRecord {
+    fn from(
+        record_data: crate::codegen::com::crabdance::nandi::post::RecordData,
+    ) -> Self {
+        KnownRecord::CodegenComCrabdanceNandiPost(Box::new(record_data.into()))
     }
 }
 impl Into<atrium_api::types::Unknown> for KnownRecord {

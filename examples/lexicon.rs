@@ -1,4 +1,4 @@
-/// Lexicon types for xyz.blogosphere.post
+/// Lexicon types for com.crabdance.nandi.post
 /// 
 /// This module contains Rust types that correspond to the AT Protocol lexicon
 /// defined in lexicons/status.json. These types provide type-safe interaction
@@ -7,7 +7,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// Blog post record as defined by xyz.blogosphere.post lexicon
+/// Blog post record as defined by com.crabdance.nandi.post lexicon
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlogPostRecord {
     /// The title of the blog post (1-200 characters)

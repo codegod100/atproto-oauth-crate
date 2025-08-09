@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::{fmt::Debug, sync::Arc};
 
 // Import the generated codegen types
-use crate::codegen::xyz::blogosphere::post::{Record as BlogPostRecord, RecordData as BlogPostRecordData};
+use crate::codegen::com::crabdance::nandi::post::{Record as BlogPostRecord, RecordData as BlogPostRecordData};
 use crate::codegen::record::KnownRecord;
 
 /// Creates all tables needed for this example application.
