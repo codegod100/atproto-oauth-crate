@@ -1,18 +1,18 @@
 use atproto_oauth::Template;
 
 #[derive(Template)]
-#[template(path = "home.html")]
+#[template(path = "home.html", config = "examples/askama.toml")]
 pub struct HomeTemplate;
 
 #[derive(Template)]
-#[template(path = "success.html")]
+#[template(path = "success.html", config = "examples/askama.toml")]
 pub struct SuccessTemplate {
     pub user_info: Option<UserInfo>,
     pub error_message: Option<String>,
 }
 
 #[derive(Template)]
-#[template(path = "error.html")]
+#[template(path = "error.html", config = "examples/askama.toml")]
 pub struct ErrorTemplate {
     pub title: String,
     pub handle: Option<String>,
