@@ -1,0 +1,55 @@
+{
+  "lexicon": 1,
+  "id": "xyz.blogosphere.post",
+  "defs": {
+    "main": {
+      "type": "record",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["title", "content", "createdAt"],
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "The title of the blog post"
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 10000,
+            "description": "The main content of the blog post in markdown"
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "Optional summary/excerpt of the post"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 50
+            },
+            "maxLength": 10,
+            "description": "Tags for categorizing the post"
+          },
+          "published": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the post is published or draft"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "datetime"
+          }
+        }
+      }
+    }
+  }
+}

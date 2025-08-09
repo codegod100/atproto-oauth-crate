@@ -29,6 +29,8 @@ env_logger = "0.11.7"
 
 [dev-dependencies]
 
+[build-dependencies]
+
 [features]
 default = ["sqlite-storage"]
 sqlite-storage = []

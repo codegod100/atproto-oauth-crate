@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 
 {% block content %}
-<h1>🔐 AT Protocol OAuth Example</h1>
+<h1>📝 AT Protocol Blog Example</h1>
 
 <div class="info">
-    <p>This example demonstrates the <code>atproto-oauth</code> Rust crate in action.</p>
-    <p>This is a <strong>Rust web server</strong> built with Axum that shows how to integrate AT Protocol OAuth into your applications.</p>
+    <p>This example demonstrates the <code>atproto-oauth</code> Rust crate with a custom <strong>blog post lexicon</strong>.</p>
+    <p>This is a <strong>Rust web server</strong> built with Axum that shows how to integrate AT Protocol OAuth with custom record types.</p>
     <p>To test the OAuth flow, you'll need a Bluesky handle (like <code>user.bsky.social</code>).</p>
     <p><a href="https://github.com/codegod100/atproto-oauth-crate" target="_blank">📖 View full documentation and source code on GitHub</a></p>
 </div>
@@ -21,6 +21,7 @@
     </ul>
     <p><strong>Run this example:</strong> <code>cargo run --example basic_usage</code></p>
     <p><strong>Database Schema:</strong> See <code>examples/schema.rs</code> for how to integrate OAuth tables with your application schema</p>
+    <p><strong>Custom Lexicon:</strong> See <code>lexicons/status.json</code> and <code>examples/lexicon.rs</code> for the blog post record definition</p>
 </div>
 
 <h2>Test OAuth Flow</h2>
@@ -37,7 +38,15 @@
         <li>Enter your AT Protocol handle above</li>
         <li>You'll be redirected to your PDS for authentication</li>
         <li>After auth, you'll be redirected back to <code>/oauth/callback</code></li>
-        <li>The callback will process the OAuth response</li>
+        <li>The callback will process the OAuth response and demonstrate the blog post lexicon</li>
     </ol>
+    
+    <h3>📄 Custom Lexicon Features:</h3>
+    <ul>
+        <li><strong>Blog Posts</strong> - Title, content, summary, tags</li>
+        <li><strong>Publishing State</strong> - Draft/published status</li>
+        <li><strong>Timestamps</strong> - Created and updated times</li>
+        <li><strong>Validation</strong> - Type-safe constraints from lexicon schema</li>
+    </ul>
 </div>
 {% endblock %}

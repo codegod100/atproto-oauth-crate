@@ -1,6 +1,8 @@
 /// Long-running example showing how to use the atproto-oauth crate with a web server
 mod schema;
 mod templates;
+mod lexicon;
+mod codegen;
 
 use atproto_oauth::{
     // Core OAuth functionality
@@ -11,8 +13,9 @@ use atproto_oauth::{
     // Web framework types
     Query, State, Redirect, get, Router,
 };
-use schema::create_tables_in_database;
+use schema::{create_tables_in_database, BlogPostFromDb};
 use templates::{HomeTemplate, SuccessTemplate, ErrorTemplate, UserInfo};
+use codegen::xyz::blogosphere::post::RecordData as BlogPostRecordData;
 use std::sync::Arc;
 // Removed unused import
 
@@ -181,6 +184,14 @@ async fn callback_handler(
                 }
             };
 
+            // TODO: Demonstrate creating a sample blog post using generated codegen types
+            // This would require restructuring the app state to include the database pool
+            // if let Some(ref info) = user_info {
+            //     if let Some(ref did) = info.did {
+            //         let _ = create_sample_blog_post(&db_pool, did).await;
+            //     }
+            // }
+
             Ok(SuccessTemplate {
                 user_info,
                 error_message: None,
@@ -196,5 +207,72 @@ async fn callback_handler(
             })
         }
     }
+}
+
+/// Creates a sample blog post to demonstrate the generated codegen types
+async fn create_sample_blog_post(pool: &atproto_oauth::Pool, author_did: &str) -> Result<(), Box<dyn std::error::Error>> {
+    println!("🔬 Creating sample blog post using generated codegen types...");
+
+    // Create a sample blog post using the generated RecordData
+    let record_data = BlogPostRecordData {
+        title: "Welcome to AT Protocol Blogging!".to_string(),
+        content: r#"# Hello AT Protocol!
+
+This is a sample blog post created using the **xyz.blogosphere.post** lexicon.
+
+## Features
+
+- ✅ **Type-safe** record creation using generated Rust types
+- 🔐 **OAuth authenticated** - you're logged in with your AT Protocol identity  
+- 📝 **Rich content** - Markdown support for formatting
+- 🏷️ **Tags** - Categorize your posts
+- 📅 **Timestamps** - Automatic created/updated tracking
+
+## Implementation
+
+This post was created using:
+
+```rust
+let record_data = BlogPostRecordData {
+    title: "Welcome to AT Protocol Blogging!".to_string(),
+    content: "...".to_string(),
+    // ... other fields
+};
+```
+
+The lexicon ensures type safety and validation according to the AT Protocol schema!"#.to_string(),
+        summary: Some("A sample blog post demonstrating the xyz.blogosphere.post lexicon with AT Protocol OAuth integration.".to_string()),
+        tags: Some(vec![
+            "atproto".to_string(),
+            "rust".to_string(),
+            "oauth".to_string(),
+            "lexicon".to_string(),
+            "demo".to_string()
+        ]),
+        published: Some(true),
+        created_at: atrium_api::types::string::Datetime::new(chrono::Utc::now().into()),
+        updated_at: Some(atrium_api::types::string::Datetime::new(chrono::Utc::now().into())),
+    };
+
+    // Create a sample URI for this post
+    let sample_uri = format!("at://{}/xyz.blogosphere.post/{}", author_did, "sample-post-123");
+    
+    // Convert to our database model
+    let blog_post = BlogPostFromDb::from_codegen_record_data(
+        sample_uri,
+        author_did.to_string(),
+        &record_data
+    )?;
+
+    // Save to database
+    let pool_arc = std::sync::Arc::new(pool.clone());
+    blog_post.save(&pool_arc).await?;
+
+    println!("✅ Sample blog post created and saved to database!");
+    println!("   Title: {}", blog_post.title);
+    println!("   Tags: {}", blog_post.tags);
+    println!("   Published: {}", blog_post.published);
+
+    Ok(())
 }
 
