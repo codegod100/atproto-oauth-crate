@@ -80,6 +80,7 @@ async fn home_handler() -> Html<&'static str> {
         <p>This example demonstrates the <code>atproto-oauth</code> Rust crate in action.</p>
         <p>This is a <strong>Rust web server</strong> built with Axum that shows how to integrate AT Protocol OAuth into your applications.</p>
         <p>To test the OAuth flow, you'll need a Bluesky handle (like <code>user.bsky.social</code>).</p>
+        <p><a href="https://github.com/codegod100/atproto-oauth-crate" target="_blank">📖 View full documentation and source code on GitHub</a></p>
     </div>
     
     <div class="info">
